@@ -1,0 +1,48 @@
+Dumont
+Copyright (c) 2026 IRQ Studio, LLC
+
+This product includes software originally developed as Paperling by Saqlain
+Abbas (https://github.com/Razee4315/Paperling), licensed under the Apache
+License, Version 2.0.
+
+Source files in this repository have been modified from the original, and new
+files have been added. See the git history for the full record of changes.
+
+Dumont is an independent fork. It is not affiliated with, endorsed by, or
+supported by the Paperling project or its author.
+
+--------------------------------------------------------------------------------
+Theme palettes
+
+Several of the built-in themes in src/themes/builtin.ts are ports of color
+schemes published by other projects, each under the MIT License. Dumont bundles
+no code from any of them: what is reproduced is the palette, adapted to Dumont's
+own tokens, and in places adjusted to meet a WCAG AA contrast floor the original
+does not hold to. The themes are named after the schemes they follow so that
+users can find them; none of these projects is affiliated with or endorses
+Dumont.
+
+    Dracula      Copyright (c) 2016 Dracula Theme
+                 https://github.com/dracula/dracula-theme
+    Solarized    Copyright (c) 2011 Ethan Schoonover
+                 https://github.com/altercation/solarized
+    Nord         Copyright (c) 2016-present Sven Greb
+                 https://github.com/nordtheme/nord
+    Catppuccin   Copyright (c) 2021-present Catppuccin
+                 https://github.com/catppuccin/catppuccin
+
+The Visual Studio 2017 theme follows the default colors of Microsoft Visual
+Studio, which is not an open-source project; it is an independent reproduction
+and Microsoft has no involvement in it.
+
+--------------------------------------------------------------------------------
+Original notice, retained unmodified per Apache License 2.0 section 4(d):
+
+Paperling
+Copyright 2025 Saqlain Abbas
+
+Licensed under the Apache License, Version 2.0 (the "License"); you may not
+use this software except in compliance with the License. A copy of the
+License is provided in the LICENSE file and is also available at:
+
+    http://www.apache.org/licenses/LICENSE-2.0

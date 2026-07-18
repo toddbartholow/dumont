@@ -1,0 +1,22 @@
+// Typechecks the test files, which tsconfig.json deliberately EXCLUDES so their
+// vitest/jsdom types never leak into the production build (`tsc && vite build`).
+// That exclusion left the ~600 tests typechecked by nothing: vitest runs them
+// through esbuild, which strips types without checking them, so a renamed API or a
+// wrong mock signature in a test would pass CI silently. This config is the gate
+// that closes that hole. Run via `bun run typecheck`; CI runs it too.
+//
+// It reuses the base compiler options and simply stops excluding the tests. The
+// jest-dom matcher types (toBeInTheDocument and friends) come from the global
+// augmentation in src/test/setup.ts, which this include pulls in.
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    // Node globals for the tests that read files (csp, bundleIntegrity, appWindow).
+    // React and the jest-dom matchers arrive via imports, so listing only "node"
+    // here does not drop them.
+    "types": ["node"]
+  },
+  "include": ["src"],
+  "exclude": []
+}

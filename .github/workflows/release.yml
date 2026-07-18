@@ -1,0 +1,209 @@
+name: Release
+
+# Releases are cut MANUALLY (Actions tab → Release → Run workflow), not on
+# every push. Pushes to main only run CI. This lets us batch several fixes
+# into one release so users aren't hit with frequent update prompts. The
+# version-bump / changelog-roll logic below still runs on manual dispatch.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  # ─── Job 1: Version check + bump ──────────────────────────
+  check-and-bump:
+    runs-on: ubuntu-latest
+    outputs:
+      should_release: ${{ steps.bump.outputs.should_release }}
+      version: ${{ steps.bump.outputs.version }}
+      notes: ${{ steps.notes.outputs.notes }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 0
+
+      - name: Check for changes and bump version
+        id: bump
+        run: |
+          # Get current version from tauri.conf.json
+          CURRENT_VERSION=$(jq -r '.version' src-tauri/tauri.conf.json)
+          echo "Current version: $CURRENT_VERSION"
+
+          # Check if tag for current version exists
+          if git tag -l "v$CURRENT_VERSION" | grep -q "v$CURRENT_VERSION"; then
+            echo "Tag v$CURRENT_VERSION already exists"
+
+            # Check if there are commits since the last tag
+            COMMITS_SINCE=$(git rev-list "v$CURRENT_VERSION"..HEAD --count 2>/dev/null || echo "0")
+            echo "Commits since v$CURRENT_VERSION: $COMMITS_SINCE"
+
+            if [ "$COMMITS_SINCE" -eq "0" ]; then
+              echo "No new commits since last release — skipping"
+              echo "should_release=false" >> $GITHUB_OUTPUT
+              echo "version=$CURRENT_VERSION" >> $GITHUB_OUTPUT
+              exit 0
+            fi
+
+            # Auto-bump patch version
+            IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT_VERSION"
+            NEW_PATCH=$((PATCH + 1))
+            NEW_VERSION="$MAJOR.$MINOR.$NEW_PATCH"
+            echo "Bumping version: $CURRENT_VERSION → $NEW_VERSION"
+
+            # Update tauri.conf.json
+            jq --arg v "$NEW_VERSION" '.version = $v' src-tauri/tauri.conf.json > tmp.json && mv tmp.json src-tauri/tauri.conf.json
+
+            # Update package.json
+            jq --arg v "$NEW_VERSION" '.version = $v' package.json > tmp.json && mv tmp.json package.json
+
+            # Update Cargo.toml version
+            sed -i "s/^version = \"$CURRENT_VERSION\"/version = \"$NEW_VERSION\"/" src-tauri/Cargo.toml
+
+            # Roll the changelog: close [Unreleased] into a dated section for
+            # this version and open a fresh, empty [Unreleased] above it. This
+            # is what keeps each release's "What's new" scoped to just its own
+            # changes instead of the whole accumulated history.
+            RELEASE_DATE=$(date -u +%Y-%m-%d)
+            sed -i "0,/^## \[Unreleased\]/s//## [Unreleased]\n\n## [$NEW_VERSION] - $RELEASE_DATE/" CHANGELOG.md
+
+            # Commit the version bump
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git add src-tauri/tauri.conf.json package.json src-tauri/Cargo.toml CHANGELOG.md
+            git commit -m "chore: bump version to $NEW_VERSION [skip ci]"
+            git push
+
+            echo "should_release=true" >> $GITHUB_OUTPUT
+            echo "version=$NEW_VERSION" >> $GITHUB_OUTPUT
+          else
+            echo "Tag v$CURRENT_VERSION does not exist — first release"
+            echo "should_release=true" >> $GITHUB_OUTPUT
+            echo "version=$CURRENT_VERSION" >> $GITHUB_OUTPUT
+          fi
+
+      # Build the release body from the top CHANGELOG section so the updater's
+      # "What's new" popup shows the actual changes (the in-app dialog strips
+      # the Installation block; the GitHub release page keeps it). Falls back to
+      # the generic blurb if the section comes out empty.
+      - name: Extract release notes from CHANGELOG
+        id: notes
+        run: |
+          VERSION="${{ steps.bump.outputs.version }}"
+          # Print only THIS version's section — the lines between its
+          # "## [VERSION]" heading and the next "## [" heading — so the release
+          # notes are scoped to just this release, not the whole history.
+          CHANGES=$(awk -v ver="## [$VERSION]" '
+            index($0, ver) == 1 { f = 1; next }
+            f && /^## \[/ { exit }
+            f { print }
+          ' CHANGELOG.md)
+          if [ -z "$(echo "$CHANGES" | tr -d '[:space:]')" ]; then
+            CHANGES="A new version of Dumont is available."
+          fi
+          {
+            echo "notes<<__DUMONT_NOTES__"
+            echo "## What's new in v$VERSION"
+            echo ""
+            printf '%s\n' "$CHANGES"
+            echo ""
+            echo "### Installation"
+            echo "- **Windows:** \`.msi\` (recommended) or \`.exe\` (NSIS installer)"
+            echo "- **Linux:** \`.deb\` or \`.AppImage\`"
+            echo "- **macOS:** \`.dmg\`"
+            echo ""
+            echo "See the [CHANGELOG](https://github.com/toddbartholow/Dumont/blob/main/CHANGELOG.md) for the full history."
+            echo "__DUMONT_NOTES__"
+          } >> "$GITHUB_OUTPUT"
+
+  # ─── Job 2: Build + Release ────────────────────────────────
+  release:
+    needs: check-and-bump
+    if: needs.check-and-bump.outputs.should_release == 'true'
+    # This job holds the signing key, so it targets the "release" environment,
+    # which has a required reviewer: a release pauses for approval before the key
+    # is ever exposed. Configured in repo Settings -> Environments.
+    environment: release
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: windows-latest
+            args: '--target x86_64-pc-windows-msvc'
+            rust-targets: ''
+          - platform: windows-11-arm
+            args: '--target aarch64-pc-windows-msvc'
+            rust-targets: ''
+          # Bundle Linux on the OLDEST distro we support, not the newest. The
+          # .deb and .AppImage link against the build machine's glibc, so a
+          # 24.04 build (glibc 2.39) refuses to start on Ubuntu 22.04 LTS
+          # (2.35) or Debian 12 (2.36). Building on 22.04 runs on 22.04 AND on
+          # everything newer; the reverse is not true.
+          - platform: ubuntu-22.04
+            args: ''
+            rust-targets: ''
+          # A universal (arm64 + x86_64) .dmg. Without an explicit target,
+          # tauri-action builds only the runner's own arch, and macos-latest is
+          # Apple Silicon, so the release shipped nothing an Intel Mac could
+          # run. Both Rust targets have to be installed for the fat binary to
+          # link.
+          - platform: macos-latest
+            args: '--target universal-apple-darwin'
+            rust-targets: 'aarch64-apple-darwin,x86_64-apple-darwin'
+
+    runs-on: ${{ matrix.platform }}
+
+    steps:
+      - name: Checkout repository (with bumped version)
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: main
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+        with:
+          targets: ${{ matrix.rust-targets }}
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        # Caching is an optimization — a flaky GitHub cache service must never
+        # fail the release build (it took down a Windows release once).
+        continue-on-error: true
+        with:
+          workspaces: './src-tauri -> target'
+
+      - name: Install Linux dependencies
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: latest
+
+      - name: Install frontend dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Build and Release
+        uses: tauri-apps/tauri-action@84b9d35b5fc46c1e45415bdb6144030364f7ebc5 # v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Updater artifact signing — the matching pubkey lives in
+          # tauri.conf.json. With createUpdaterArtifacts enabled the build
+          # FAILS if this secret is missing, so it must stay set on the repo.
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          # The signing key was generated without a password; GitHub refuses
+          # empty-valued secrets, so the empty password is set inline here.
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ""
+        with:
+          tauriScript: bun run tauri
+          tagName: v__VERSION__
+          releaseName: 'Dumont v__VERSION__'
+          releaseBody: ${{ needs.check-and-bump.outputs.notes }}
+          args: ${{ matrix.args }}
+          releaseDraft: false
+          prerelease: false
+          includeUpdaterJson: true

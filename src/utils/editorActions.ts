@@ -1,0 +1,393 @@
+/**
+ * Editor key-handling helpers for Dumont's CodeEditor.
+ *
+ * All functions are pure: they take the current text + selection and return the
+ * new text + selection, or `null` if the key is not handled (so the textarea
+ * default behavior runs).
+ */
+
+export interface EditorState {
+    text: string;
+    selStart: number;
+    selEnd: number;
+}
+
+export interface EditorResult {
+    text: string;
+    selStart: number;
+    selEnd: number;
+}
+
+const INDENT = "  "; // 2 spaces — markdown-friendly nested lists
+
+/* ---------- Selection / line helpers ---------- */
+
+const lineStartIndex = (text: string, pos: number): number => {
+    const before = text.slice(0, pos);
+    const nl = before.lastIndexOf("\n");
+    return nl === -1 ? 0 : nl + 1;
+};
+
+const lineEndIndex = (text: string, pos: number): number => {
+    const idx = text.indexOf("\n", pos);
+    return idx === -1 ? text.length : idx;
+};
+
+/* ---------- Table cell navigation ---------- */
+
+const isTableLine = (line: string): boolean => {
+    const t = line.trim();
+    return t.startsWith("|") && t.endsWith("|") && t.length > 1;
+};
+
+/**
+ * Tab inside a markdown table moves to the next cell (skipping the separator
+ * `| --- |` row). At the last cell of a row, jumps to row 1 of next row.
+ * At the last cell of the last row, creates a new row.
+ */
+export function handleTableTab(state: EditorState, shift: boolean): EditorResult | null {
+    const { text, selStart, selEnd } = state;
+    if (selStart !== selEnd) return null;
+
+    const ls = lineStartIndex(text, selStart);
+    const le = lineEndIndex(text, selStart);
+    const line = text.slice(ls, le);
+    if (!isTableLine(line)) return null;
+
+    // Find pipe positions on the current line
+    const pipes: number[] = [];
+    for (let i = 0; i < line.length; i++) if (line[i] === "|") pipes.push(i);
+    if (pipes.length < 2) return null;
+
+    const localPos = selStart - ls;
+    let cellIdx = 0;
+    for (let i = 0; i < pipes.length - 1; i++) {
+        if (localPos >= pipes[i] && localPos <= pipes[i + 1]) {
+            cellIdx = i;
+            break;
+        }
+    }
+
+    if (!shift) {
+        if (cellIdx < pipes.length - 2) {
+            // Next cell, place caret at content start
+            const target = ls + pipes[cellIdx + 1] + 2;
+            return { text, selStart: target, selEnd: target };
+        }
+        // Last cell — go to next row's first cell, skipping separator rows
+        let nextLs = le + 1;
+        while (nextLs < text.length) {
+            const nle = lineEndIndex(text, nextLs);
+            const nextLine = text.slice(nextLs, nle);
+            if (!isTableLine(nextLine)) {
+                // Not a table — create a new row matching the column count
+                const cols = pipes.length - 1;
+                const blank = "| " + Array(cols).fill("").join(" | ") + " |";
+                const inserted = "\n" + blank;
+                const target = le + 3; // after first "| "
+                return {
+                    text: text.slice(0, le) + inserted + text.slice(le),
+                    selStart: target,
+                    selEnd: target,
+                };
+            }
+            // Skip separator rows
+            if (/^\|\s*:?-+:?\s*(\|\s*:?-+:?\s*)*\|$/.test(nextLine.trim())) {
+                nextLs = nle + 1;
+                continue;
+            }
+            // Found a body row — go to its first cell
+            const firstPipe = nextLs + nextLine.indexOf("|");
+            const target = firstPipe + 2;
+            return { text, selStart: target, selEnd: target };
+        }
+        return null;
+    }
+
+    // Shift+Tab — previous cell
+    if (cellIdx > 0) {
+        const target = ls + pipes[cellIdx - 1] + 2;
+        return { text, selStart: target, selEnd: target };
+    }
+    // First cell — try previous row
+    if (ls > 0) {
+        let prevLe = ls - 1;
+        while (prevLe > 0) {
+            const prevLs = lineStartIndex(text, prevLe - 1);
+            const prevLine = text.slice(prevLs, prevLe);
+            if (!isTableLine(prevLine)) break;
+            if (/^\|\s*:?-+:?\s*(\|\s*:?-+:?\s*)*\|$/.test(prevLine.trim())) {
+                prevLe = prevLs - 1;
+                continue;
+            }
+            // Last cell of prev row
+            const prevPipes: number[] = [];
+            for (let i = 0; i < prevLine.length; i++) if (prevLine[i] === "|") prevPipes.push(i);
+            const target = prevLs + prevPipes[prevPipes.length - 2] + 2;
+            return { text, selStart: target, selEnd: target };
+        }
+    }
+    return null;
+}
+
+/* ---------- Tab / Shift+Tab ---------- */
+
+export function handleTab(state: EditorState, shift: boolean): EditorResult | null {
+    // Try table-tab first; falls through to indent if not in a table.
+    const tableResult = handleTableTab(state, shift);
+    if (tableResult) return tableResult;
+
+    const { text, selStart, selEnd } = state;
+
+    // Multi-line: indent or outdent each line in the selection
+    const hasNewline = text.slice(selStart, selEnd).includes("\n");
+    if (selStart !== selEnd && hasNewline) {
+        const blockStart = lineStartIndex(text, selStart);
+        const blockEnd = lineEndIndex(text, selEnd);
+        const block = text.slice(blockStart, blockEnd);
+        const lines = block.split("\n");
+
+        let newBlock: string;
+        if (shift) {
+            newBlock = lines.map((l) => l.startsWith(INDENT) ? l.slice(INDENT.length) : l.startsWith(" ") ? l.slice(1) : l).join("\n");
+        } else {
+            newBlock = lines.map((l) => INDENT + l).join("\n");
+        }
+
+        const newText = text.slice(0, blockStart) + newBlock + text.slice(blockEnd);
+        const delta = newBlock.length - block.length;
+        return {
+            text: newText,
+            selStart: blockStart,
+            selEnd: blockEnd + delta,
+        };
+    }
+
+    // Single-line: insert / remove indent at cursor
+    if (shift) {
+        const ls = lineStartIndex(text, selStart);
+        const head = text.slice(ls, ls + INDENT.length);
+        if (head === INDENT) {
+            return {
+                text: text.slice(0, ls) + text.slice(ls + INDENT.length),
+                selStart: Math.max(ls, selStart - INDENT.length),
+                selEnd: Math.max(ls, selEnd - INDENT.length),
+            };
+        }
+        return null;
+    }
+
+    return {
+        text: text.slice(0, selStart) + INDENT + text.slice(selEnd),
+        selStart: selStart + INDENT.length,
+        selEnd: selStart + INDENT.length,
+    };
+}
+
+/* ---------- Enter: list continuation ---------- */
+
+const LIST_PATTERN = /^(\s*)([-*+]|\d+\.)\s+(\[[ xX]\]\s+)?/;
+const QUOTE_PATTERN = /^(\s*>\s+)/;
+
+export function handleEnter(state: EditorState): EditorResult | null {
+    const { text, selStart, selEnd } = state;
+    if (selStart !== selEnd) return null;
+
+    const ls = lineStartIndex(text, selStart);
+    const currentLine = text.slice(ls, selStart);
+
+    // Blockquote continuation
+    const qm = currentLine.match(QUOTE_PATTERN);
+    if (qm) {
+        // If only the quote prefix is on the line, terminate the quote
+        if (currentLine.trim() === ">") {
+            return {
+                text: text.slice(0, ls) + "\n" + text.slice(selStart),
+                selStart: ls + 1,
+                selEnd: ls + 1,
+            };
+        }
+        const insert = "\n" + qm[1];
+        return {
+            text: text.slice(0, selStart) + insert + text.slice(selEnd),
+            selStart: selStart + insert.length,
+            selEnd: selStart + insert.length,
+        };
+    }
+
+    // List continuation
+    const lm = currentLine.match(LIST_PATTERN);
+    if (lm) {
+        const indent = lm[1];
+        const marker = lm[2];
+        const taskBox = lm[3] ? "[ ] " : "";
+        const restAfterPrefix = currentLine.slice(lm[0].length);
+
+        // Empty list item — terminate the list
+        if (restAfterPrefix.trim() === "") {
+            return {
+                text: text.slice(0, ls) + "\n" + text.slice(selStart),
+                selStart: ls + 1,
+                selEnd: ls + 1,
+            };
+        }
+
+        // Numbered list: increment
+        let nextMarker = marker;
+        const numMatch = marker.match(/^(\d+)\.$/);
+        if (numMatch) {
+            nextMarker = `${parseInt(numMatch[1], 10) + 1}.`;
+        }
+
+        const insert = `\n${indent}${nextMarker} ${taskBox}`;
+        return {
+            text: text.slice(0, selStart) + insert + text.slice(selEnd),
+            selStart: selStart + insert.length,
+            selEnd: selStart + insert.length,
+        };
+    }
+
+    return null;
+}
+
+/* ---------- Auto-pair ---------- */
+
+const AUTO_PAIRS: Record<string, string> = {
+    "(": ")",
+    "[": "]",
+    "{": "}",
+    "`": "`",
+    '"': '"',
+    "'": "'",
+};
+
+const WRAP_PAIRS: Record<string, string> = {
+    "(": ")",
+    "[": "]",
+    "{": "}",
+    "`": "`",
+    "*": "*",
+    "_": "_",
+    '"': '"',
+};
+
+export function handleAutoPair(state: EditorState, ch: string): EditorResult | null {
+    const { text, selStart, selEnd } = state;
+
+    // Wrap selection
+    if (selStart !== selEnd && WRAP_PAIRS[ch]) {
+        const close = WRAP_PAIRS[ch];
+        const selected = text.slice(selStart, selEnd);
+        const wrapped = ch + selected + close;
+        return {
+            text: text.slice(0, selStart) + wrapped + text.slice(selEnd),
+            selStart: selStart + 1,
+            selEnd: selEnd + 1,
+        };
+    }
+
+    // Empty selection: insert pair, place caret in middle
+    if (selStart === selEnd && AUTO_PAIRS[ch]) {
+        const close = AUTO_PAIRS[ch];
+        const nextChar = text[selStart] ?? "";
+        // Don't auto-pair quotes when next to a word char (likely an apostrophe)
+        if ((ch === "'" || ch === '"') && /\w/.test(text[selStart - 1] ?? "")) return null;
+        // Don't double-up if the close char is already there (let the user "type past" it)
+        if (nextChar === close && (ch === ")" || ch === "]" || ch === "}" || ch === "`" || ch === '"' || ch === "'")) return null;
+
+        const inserted = ch + close;
+        return {
+            text: text.slice(0, selStart) + inserted + text.slice(selEnd),
+            selStart: selStart + 1,
+            selEnd: selStart + 1,
+        };
+    }
+
+    return null;
+}
+
+/** "Type past" closer when caret is right before a matching closer that we just inserted. */
+export function handleSkipCloser(state: EditorState, ch: string): EditorResult | null {
+    const { text, selStart, selEnd } = state;
+    if (selStart !== selEnd) return null;
+    if (![")", "]", "}", "`", '"', "'"].includes(ch)) return null;
+    if (text[selStart] !== ch) return null;
+    return {
+        text,
+        selStart: selStart + 1,
+        selEnd: selStart + 1,
+    };
+}
+
+/* ---------- Bold / Italic / Link ---------- */
+
+export function wrapSelection(
+    state: EditorState,
+    left: string,
+    right: string = left,
+    placeholder: string = ""
+): EditorResult {
+    const { text, selStart, selEnd } = state;
+    const selected = text.slice(selStart, selEnd) || placeholder;
+
+    // Toggle: if selection is already wrapped, unwrap
+    const beforeSel = text.slice(Math.max(0, selStart - left.length), selStart);
+    const afterSel = text.slice(selEnd, selEnd + right.length);
+    if (selStart !== selEnd && beforeSel === left && afterSel === right) {
+        return {
+            text: text.slice(0, selStart - left.length) + selected + text.slice(selEnd + right.length),
+            selStart: selStart - left.length,
+            selEnd: selEnd - left.length,
+        };
+    }
+
+    const wrapped = left + selected + right;
+    return {
+        text: text.slice(0, selStart) + wrapped + text.slice(selEnd),
+        selStart: selStart + left.length,
+        selEnd: selStart + left.length + selected.length,
+    };
+}
+
+export function insertLink(state: EditorState): EditorResult {
+    const { text, selStart, selEnd } = state;
+    const selected = text.slice(selStart, selEnd);
+    const isUrl = /^https?:\/\//i.test(selected);
+    const linkText = isUrl ? "" : selected;
+    const url = isUrl ? selected : "url";
+    const inserted = `[${linkText}](${url})`;
+    const newText = text.slice(0, selStart) + inserted + text.slice(selEnd);
+    // Place caret inside whichever part is empty
+    const caret = isUrl
+        ? selStart + 1 // inside [|]
+        : selStart + linkText.length + 3; // inside (|)
+    return {
+        text: newText,
+        selStart: caret,
+        selEnd: isUrl ? caret : caret + url.length,
+    };
+}
+
+/* ---------- Backspace: erase auto-pair ---------- */
+
+export function handleBackspace(state: EditorState): EditorResult | null {
+    const { text, selStart, selEnd } = state;
+    if (selStart !== selEnd || selStart === 0) return null;
+    const prev = text[selStart - 1];
+    const next = text[selStart];
+    if (
+        (prev === "(" && next === ")") ||
+        (prev === "[" && next === "]") ||
+        (prev === "{" && next === "}") ||
+        (prev === "`" && next === "`") ||
+        (prev === '"' && next === '"') ||
+        (prev === "'" && next === "'")
+    ) {
+        return {
+            text: text.slice(0, selStart - 1) + text.slice(selStart + 1),
+            selStart: selStart - 1,
+            selEnd: selStart - 1,
+        };
+    }
+    return null;
+}

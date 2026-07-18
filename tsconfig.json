@@ -1,0 +1,37 @@
+{
+  "compilerOptions": {
+    "target": "ES2020",
+    "useDefineForClassFields": true,
+    // ES2022 for Error's `cause`, which lets a rethrow attach the original error rather
+    // than discarding it (see aiTransport/aiChat/aiAssist, where a friendlier message
+    // used to be the ONLY thing left of a failure). Every webview Tauri ships on has
+    // supported it since 2021: WKWebView from Safari 15, WebView2 from Chromium 93.
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "skipLibCheck": true,
+
+    /* Bundler mode */
+    "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "noEmit": true,
+    "jsx": "react-jsx",
+
+    /* Linting */
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noFallthroughCasesInSwitch": true,
+
+    /* Only ambient types that arrive through an explicit import or a /// reference
+       (React via its imports, vite/client via src/vite-env.d.ts). Without this,
+       installing @types/node for the test typecheck would auto-load Node globals
+       (process, Buffer, __dirname) into this production build too, so webview code
+       could use them with no compile error. Node types live in tsconfig.test.json. */
+    "types": []
+  },
+  "include": ["src"],
+  "exclude": ["src/**/*.test.ts", "src/**/*.test.tsx", "src/test"],
+  "references": [{ "path": "./tsconfig.node.json" }]
+}

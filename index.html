@@ -1,0 +1,57 @@
+<!doctype html>
+<!-- The inline style is a dark default so the very first bytes never paint
+     white; the script below refines it to the user's saved theme before the
+     body renders. Both defend against the Tauri startup white flash (#98). -->
+<html lang="en" style="background-color: #0a0a0a">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/icon.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Dumont</title>
+    <!-- Render-blocking: paint the last-applied theme's background BEFORE first
+         paint, so the webview never flashes white (or the wrong color) on launch
+         or reload. Issue #98. The window is created hidden and revealed once React
+         mounts, so this mostly covers webview RELOADS (Cmd+R, the updater, a dev
+         full-reload) where the window is already visible.
+
+         The real theme is appearance.theme in settings.json, but that is behind
+         async Tauri IPC that is not up at this instant, so ThemeContext mirrors the
+         resolved --bg-primary and light/dark type into localStorage for this to
+         read. It stores the COLOR, not just a theme id, so this stays correct for
+         user themes and never drifts when a built-in theme is added. Absent (first
+         launch, or cleared storage) it follows the OS preference, which is exactly
+         what the app does for an unset theme. -->
+    <script>
+      (function () {
+        try {
+          var el = document.documentElement;
+          var bg = localStorage.getItem("dumont-theme-bg");
+          var type = localStorage.getItem("dumont-theme-type");
+          var theme = localStorage.getItem("dumont-theme");
+          if (!type) {
+            type =
+              window.matchMedia &&
+              window.matchMedia("(prefers-color-scheme: light)").matches
+                ? "light"
+                : "dark";
+          }
+          el.setAttribute("data-theme-type", type);
+          if (theme) el.setAttribute("data-theme", theme);
+          // The cached --bg-primary of the last theme; fall back to the dark/light
+          // default for the pre-CSS frame when there is no cache yet.
+          el.style.backgroundColor = bg || (type === "light" ? "#ffffff" : "#0a0a0a");
+        } catch (e) {
+          /* localStorage blocked or corrupt: keep the dark inline default */
+        }
+      })();
+    </script>
+    <!-- Fonts and Material Symbols are bundled locally via src/fonts.ts so the
+         app renders identically with or without an internet connection. -->
+  </head>
+
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
+

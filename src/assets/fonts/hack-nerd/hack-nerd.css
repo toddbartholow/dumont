@@ -1,0 +1,38 @@
+/* Hack Nerd Font Mono — vendored from the Nerd Fonts release because there is
+   no @fontsource package for the patched variant (LICENSE.md sits alongside;
+   Hack is MIT and Nerd Fonts patching preserves it). Full glyph set on
+   purpose: the Nerd icons in the private-use area are the reason to pick this
+   family over plain Hack. Loaded on demand via FONT_LOADERS in fonts.ts.
+   Only 400/700 exist upstream; 500/600 UI weights resolve to these by the
+   CSS font-matching rules. */
+@font-face {
+    font-family: 'Hack Nerd Font Mono';
+    font-style: normal;
+    font-display: swap;
+    font-weight: 400;
+    src: url('./HackNerdFontMono-Regular.woff2') format('woff2');
+}
+
+@font-face {
+    font-family: 'Hack Nerd Font Mono';
+    font-style: normal;
+    font-display: swap;
+    font-weight: 700;
+    src: url('./HackNerdFontMono-Bold.woff2') format('woff2');
+}
+
+@font-face {
+    font-family: 'Hack Nerd Font Mono';
+    font-style: italic;
+    font-display: swap;
+    font-weight: 400;
+    src: url('./HackNerdFontMono-Italic.woff2') format('woff2');
+}
+
+@font-face {
+    font-family: 'Hack Nerd Font Mono';
+    font-style: italic;
+    font-display: swap;
+    font-weight: 700;
+    src: url('./HackNerdFontMono-BoldItalic.woff2') format('woff2');
+}

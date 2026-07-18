@@ -1,0 +1,139 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  # Also runnable by hand (Actions tab -> CI -> Run workflow). Pushes to main
+  # went unrun on this repo for its first day: GitHub logged every PushEvent and
+  # created no workflow run, while workflow_dispatch worked on the first try. A
+  # manual trigger is the way to prove the matrix still compiles when the push
+  # trigger cannot be relied on.
+  workflow_dispatch:
+
+jobs:
+  check:
+    strategy:
+      fail-fast: false
+      matrix:
+        # Linux is pinned to the same 22.04 image release.yml bundles on. CI
+        # exists to prove the release matrix compiles, and it cannot do that
+        # from a different distro: a build that only breaks against 22.04's
+        # older glibc and system webkit would sail through a 24.04 check and
+        # fail during the release itself.
+        platform: [windows-latest, windows-11-arm, ubuntu-22.04, macos-latest]
+
+    runs-on: ${{ matrix.platform }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+        # The stable toolchain installs with the minimal profile, which omits
+        # clippy — request it explicitly so the lint step below has it.
+        with:
+          components: clippy
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        # Caching is an optimization — a flaky GitHub cache service must never
+        # fail the build (it took down a Windows release once).
+        continue-on-error: true
+        with:
+          workspaces: './src-tauri -> target'
+
+      - name: Install Linux dependencies
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: latest
+
+      - name: Install frontend dependencies
+        # --frozen-lockfile makes CI fail if bun.lock doesn't match package.json,
+        # so a PR can't silently swap or add dependencies without an obvious
+        # lockfile diff to review.
+        run: bun install --frozen-lockfile
+
+      - name: Build frontend (tsc + vite)
+        run: bun run build
+
+      # The build's `tsc` uses tsconfig.json, which excludes the test files so
+      # their vitest/jsdom types stay out of the shipped bundle. This checks the
+      # tests themselves (tsconfig.test.json), which nothing else does: vitest runs
+      # them through esbuild, which strips types without checking them.
+      - name: Typecheck tests
+        run: bun run typecheck
+
+      # eslint, with react-hooks/exhaustive-deps as an ERROR. The project ran without a
+      # linter for a long time while still carrying eslint-disable comments for rules
+      # nothing executed, and a dependency array that had quietly rotted took a useMemo
+      # with it: the command palette rebuilt its entire item list on every keystroke,
+      # under a comment explaining why it must not. A lint rule nobody runs is a comment.
+      - name: Lint frontend (eslint)
+        run: bun run lint
+
+      - name: Run frontend tests
+        run: bun run test
+
+      # clippy compiles the crate (so it subsumes `cargo check`) while also
+      # failing the build on any lint warning, keeping the Rust side clean.
+      - name: Lint Rust (clippy)
+        working-directory: src-tauri
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: Test Rust
+        working-directory: src-tauri
+        run: cargo test
+
+  # ─── Supply-chain: Rust dependencies ──────────────────────────
+  # Fails the build on a known-vulnerable crate (RUSTSEC advisory), a banned
+  # crate, or a dependency pulled from anywhere other than crates.io. Config
+  # lives in src-tauri/deny.toml. Runs once on Linux (not per-platform) since
+  # it only reads Cargo.lock — it doesn't compile the project.
+  cargo-deny:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+
+      - name: Install cargo-deny
+        run: cargo install cargo-deny --locked
+
+      - name: Check advisories, bans, and sources
+        run: cargo deny --manifest-path src-tauri/Cargo.toml check advisories bans sources
+
+  # ─── Supply-chain: known-vulnerability scan (npm + Cargo) ─────
+  # Scans every lockfile in the repo against the OSV database and fails on any
+  # package with a known vulnerability. Covers the frontend (package-lock.json)
+  # and Rust (Cargo.lock) in one pass.
+  #
+  # Tag verified against github.com/google/osv-scanner-action releases; Dependabot
+  # (github-actions ecosystem) will keep it current.
+  osv-scan:
+    uses: google/osv-scanner-action/.github/workflows/osv-scanner-reusable.yml@9a498708959aeaef5ef730655706c5a1df1edbc2 # v2.3.8
+    permissions:
+      contents: read
+      security-events: write
+      actions: read
+    with:
+      # Report-only for now: the existing dependency tree already has known npm
+      # advisories, so blocking would fail every PR on pre-existing debt. Results
+      # still upload to the Security tab. Once the current vulns are cleaned up,
+      # set this to true to make it a hard gate on newly-introduced vulnerabilities.
+      fail-on-vuln: false
+      scan-args: |-
+        -r
+        ./

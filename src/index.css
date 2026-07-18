@@ -1,0 +1,853 @@
+/*
+ * Modified by IRQ Studio, LLC (2026) from an Apache-2.0 licensed original.
+ * See NOTICE for attribution and license terms.
+ */
+@import "tailwindcss";
+
+/* ===== Theme Fallback =====
+   A theme is DATA now (src/themes), applied at runtime: ThemeProvider resolves
+   the chosen theme and writes its 37 colors, plus the ten derived --hljs-* code
+   colors, onto <html> as custom properties. The [data-theme] token blocks that
+   used to live here are gone, because a theme no longer has to exist in this file
+   to exist at all.
+
+   What follows is the dark theme, and it is ONLY the no-JS fallback: what the app
+   is painted with between first paint and first effect. Editing a value here
+   changes nothing you can see. Edit src/themes/builtin.ts and both the app and
+   its exports move together. */
+:root {
+  --bg-primary: #0a0a0a;
+  --bg-secondary: #141414;
+  --bg-titlebar: #0a0a0a;
+  --bg-editor: #0a0a0a;
+  --bg-gutter: #0f0f0f;
+  --bg-hover: #1f1f1f;
+  --bg-input: #141414;
+
+  --text-primary: #ffffff;
+  --text-secondary: #8a8a8a;
+  --text-muted: #525252;
+
+  --accent: #ffffff;
+  --accent-hover: rgba(255, 255, 255, 0.9);
+  --focus-ring: #ffffff;
+  --accent-text: #0a0a0a;
+
+  --border: #262626;
+  --border-subtle: #1a1a1a;
+
+  --code-bg: #141414;
+  --code-text: #a3a3a3;
+  --blockquote-bg: rgba(20, 20, 20, 0.8);
+
+  --syntax-h1: #ffffff;
+  --syntax-h2: #e5e5e5;
+  --syntax-h3: #d4d4d4;
+  --syntax-link: #a3a3a3;
+  --syntax-bold: #ffffff;
+  --syntax-list: #a3a3a3;
+  --syntax-number: #a3a3a3;
+  --syntax-quote: #737373;
+  --syntax-code: #737373;
+
+  --status-saved: #22c55e;
+  --status-unsaved: #f59e0b;
+  --danger: #ef4444;
+  --danger-text: #ef4444;
+
+  --scrollbar-track: #0a0a0a;
+  --scrollbar-thumb: #262626;
+  --scrollbar-hover: #404040;
+
+  --selection-bg: #404040;
+  --selection-text: #ffffff;
+
+  /* Code blocks. src/themes/highlight.ts derives these from the tokens above, and
+     that is where a theme overrides them (vs2017-dark does). Spelled out here
+     because a fallback cannot call a function. */
+  --hljs-keyword: #e5e5e5;
+  --hljs-string: #ffffff;
+  --hljs-number: #ffffff;
+  --hljs-literal: #ffffff;
+  --hljs-function: #22c55e;
+  --hljs-title: #22c55e;
+  --hljs-attr: #22c55e;
+  --hljs-params: #a3a3a3;
+  --hljs-comment: #8a8a8a;
+  --hljs-built-in: #a3a3a3;
+}
+
+/* ===== Design Tokens ===== */
+:root {
+  /* Radius scale — replace ad-hoc rounded-{lg,xl,full} usage with these */
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-pill: 9999px;
+
+  /* Spacing scale */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-6: 24px;
+  --space-8: 32px;
+}
+
+/* ===== Font Family Variables ===== */
+/* Default font - must come BEFORE attribute selectors */
+:root {
+  --font-body: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+
+  /* Code, everywhere: fenced blocks and inline spans in the preview, and the
+     same tokens inside the editor. Independent of --font-body — code has to
+     stay monospace so indentation and table pipes line up even when the body
+     font is proportional. */
+  --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace;
+}
+
+[data-font="inter"] {
+  --font-body: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+}
+
+[data-font="merriweather"] {
+  --font-body: 'Merriweather', Georgia, 'Times New Roman', serif;
+}
+
+[data-font="lora"] {
+  --font-body: 'Lora', Georgia, 'Times New Roman', serif;
+}
+
+[data-font="source-serif"] {
+  --font-body: 'Source Serif 4', Georgia, 'Times New Roman', serif;
+}
+
+[data-font="fira-sans"] {
+  --font-body: 'Fira Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+}
+
+[data-font="hack-nerd"] {
+  --font-body: 'Hack Nerd Font Mono', ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace;
+}
+
+[data-font="jetbrains-mono"] {
+  --font-body: 'JetBrains Mono', ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace;
+}
+
+/* ===== Font Size Variables =====
+   The font size is an arbitrary px number the user can type, so ThemeProvider
+   computes these from utils/typeScale.ts and writes them as inline custom
+   properties on <html>. The values here are the defaults that apply before
+   (or without) that script — they equal typeScale(16), the default size.
+
+   --font-size-editor / --line-height-editor size the CodeMirror pane, which
+   sits on a slightly smaller ladder than the preview because monospace reads
+   larger at the same px. The editor line height is px, not a unitless
+   multiplier: gutters and the active-line stripe are painted off the line box,
+   so every row must be an exact integer height. */
+:root {
+  --font-size-base: 16px;
+  --font-size-h1: 2.25em;
+  --font-size-h2: 1.75em;
+  --font-size-h3: 1.25em;
+  --line-height: 1.7;
+  --font-size-editor: 14px;
+  --line-height-editor: 24px;
+}
+
+/* ===== Base Styles ===== */
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+}
+
+body {
+  font-family: var(--font-body);
+  font-size: var(--font-size-base);
+  background-color: var(--bg-primary);
+  color: var(--text-primary);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  transition: background-color 0.2s ease, color 0.2s ease;
+}
+
+/* ===== Accessibility ===== */
+
+/* Visible keyboard focus ring on every interactive element. Only fires on
+   keyboard focus (focus-visible), so mouse clicks don't show the ring. */
+*:focus {
+  outline: none;
+}
+
+button:focus-visible,
+a:focus-visible,
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible,
+[role="button"]:focus-visible,
+[role="menuitem"]:focus-visible,
+[role="option"]:focus-visible,
+[tabindex]:not([tabindex="-1"]):focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+
+/* Find-in-preview match highlights (CSS Custom Highlight API — FIND-01).
+   ::highlight only supports color/background; fixed ambers read fine on every
+   theme since the underlying text color is preserved. */
+::highlight(dumont-find) {
+  background-color: rgba(255, 196, 0, 0.35);
+}
+
+::highlight(dumont-find-active) {
+  background-color: rgba(255, 145, 0, 0.65);
+  color: #1a1a1a;
+}
+
+/* Respect users who set "reduce motion" at the OS level. */
+@media (prefers-reduced-motion: reduce) {
+
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* ===== Desktop App Styles ===== */
+.no-select {
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.drag-region {
+  -webkit-app-region: drag;
+  app-region: drag;
+}
+
+.no-drag {
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
+}
+
+/* ===== Custom Scrollbar ===== */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--scrollbar-track);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb);
+  border-radius: 5px;
+  border: 2px solid var(--scrollbar-track);
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--scrollbar-hover);
+}
+
+/* ===== Selection ===== */
+::selection {
+  background: var(--selection-bg);
+  color: var(--selection-text);
+}
+
+/* ===== Material Icons ===== */
+.material-symbols-outlined {
+  font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+  vertical-align: middle;
+}
+
+/* ===== Editor / Code Font ===== */
+.font-mono {
+  font-family: var(--font-mono);
+}
+
+/* The editor's own typography (font, size, line height) is declared by the
+   CodeMirror theme in CodeEditor.tsx, driven by the same --font-body /
+   --font-size-editor / --line-height-editor variables the preview reads. */
+
+/* Code spans and fences keep --font-mono whatever the body font is (so
+   indentation and table pipes still line up under a proportional face). That is
+   handled by the markdown HighlightStyle in CodeEditor.tsx, which sets
+   font-family on the token span itself — a direct declaration, which wins over
+   the family inherited from .cm-scroller above regardless of specificity. */
+
+/* ===== Editor overlay scrollbar reservation =====
+   The CodeEditor stacks a transparent <textarea> on top of a styled highlight
+   overlay. They MUST agree on content width or word-wrap fires at different
+   columns and the caret drifts off the rendered glyph after scrolling.
+   `scrollbar-gutter: stable` keeps a fixed-width gutter in both layers
+   regardless of whether the scrollbar is currently shown, eliminating the
+   reflow that used to mis-align the two when content grew past the viewport.
+
+   The highlight layer should never *show* its own scrollbar — the textarea
+   owns the visible one. We hide it by making the scrollbar track + thumb
+   transparent and unclickable. This works with `pointer-events: none` on the
+   parent (so the user never tries to scroll it directly anyway). */
+.editor-overlay-scrollbar-hidden::-webkit-scrollbar-thumb,
+.editor-overlay-scrollbar-hidden::-webkit-scrollbar-track,
+.editor-overlay-scrollbar-hidden::-webkit-scrollbar-corner {
+  background: transparent;
+  border: 0;
+}
+
+.editor-overlay-scrollbar-hidden::-webkit-scrollbar-thumb:hover {
+  background: transparent;
+}
+
+.editor-overlay-scrollbar-hidden {
+  scrollbar-color: transparent transparent;
+}
+
+/* ===== Micro-Animations ===== */
+
+/* Fade in animation */
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
+  }
+}
+
+/* Fade in and slide up */
+@keyframes fadeInUp {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Fade in and slide down */
+@keyframes fadeInDown {
+  from {
+    opacity: 0;
+    transform: translateY(-10px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Gentle pulse for status indicators */
+@keyframes pulse {
+
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+
+  50% {
+    opacity: 0.8;
+    transform: scale(1.1);
+  }
+}
+
+/* Animation utility classes */
+.animate-fade-in {
+  animation: fadeIn 0.2s ease-out forwards;
+}
+
+.animate-fade-in-up {
+  animation: fadeInUp 0.3s ease-out forwards;
+}
+
+.animate-fade-in-down {
+  animation: fadeInDown 0.2s ease-out forwards;
+}
+
+.animate-pulse {
+  animation: pulse 2s ease-in-out infinite;
+}
+
+/* Button press effect */
+.btn-press {
+  transition: transform 0.1s ease-out, box-shadow 0.1s ease-out;
+}
+
+.btn-press:active {
+  transform: scale(0.95);
+}
+
+/* Smooth content transitions */
+
+/* Status dot animations */
+.status-dot-saved {
+  animation: none;
+}
+
+.status-dot-unsaved {
+  animation: pulse 1.5s ease-in-out infinite;
+}
+
+/* ===== Reader column width =====
+   The reader view puts prose in a comfortable measure and lets code blocks
+   and tables break out wider, so a long code line or a many-column table is
+   not clipped inside the measure while the window still has room. Both widths
+   arrive from MarkdownPreview as CSS variables per the reader-width setting;
+   the fallbacks below are the "wide" tier, which is the default.
+
+   .reader-column is the query container: the breakout below is sized in cqw
+   (a share of the column's own width), so it can grow past the prose measure
+   yet never past the column, on any window size, without a media query. */
+.reader-column {
+  max-width: var(--reader-wide, 1400px);
+  container-type: inline-size;
+}
+
+/* Prose, and the frontmatter card, sit at the measure, centered in the column. */
+.reader-measure {
+  max-width: var(--reader-measure, 1024px);
+  margin-inline: auto;
+}
+
+/* ===== Markdown Preview Styles ===== */
+.markdown-body {
+  line-height: var(--line-height);
+  font-family: var(--font-body);
+  font-size: var(--font-size-base);
+  /* Prose is held at the measure and centered; wide blocks below break out. */
+  max-width: var(--reader-measure, 1024px);
+  margin-inline: auto;
+}
+
+/* Code blocks and tables (both wrapped in .md-wide) break out of the prose
+   measure to the column width. They stay centered on the same axis as the
+   prose (left: 50% is the measure's center; translateX(-50%) re-centers the
+   wider box on it), so they extend symmetrically rather than shifting the
+   page. Width is capped at the column via 100cqw, so it never overflows. */
+.markdown-body > .md-wide {
+  position: relative;
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(var(--reader-wide, 1400px), 100cqw);
+  max-width: min(var(--reader-wide, 1400px), 100cqw);
+}
+
+/* A table still wider than the broken-out column (unbreakable tokens, many
+   columns, a large body font) scrolls sideways inside this box instead of
+   being clipped or pushing the page. The <table> keeps width: 100% so it
+   fills the box when it fits, and grows past it (triggering the scroll) when
+   it can't shrink. */
+.md-table-scroll {
+  overflow-x: auto;
+  /* The vertical rhythm lives on the wrapper, not the table. overflow-x makes
+     this box a block formatting context, so a margin on the table inside would
+     be trapped and could not collapse with neighboring paragraphs, leaving a
+     table with roughly double the gap a code block gets. The margin here sits
+     outside the BFC and collapses normally. */
+  margin: 1rem 0;
+}
+
+.markdown-body h1 {
+  font-size: var(--font-size-h1);
+  font-weight: 800;
+  padding-bottom: 0.3em;
+  border-bottom: 1px solid var(--border);
+  color: var(--syntax-h1);
+  margin-bottom: 1rem;
+}
+
+.markdown-body h2 {
+  font-size: var(--font-size-h2);
+  font-weight: 700;
+  padding-bottom: 0.3em;
+  border-bottom: 1px solid var(--border);
+  color: var(--syntax-h2);
+  margin-top: 2rem;
+  margin-bottom: 1rem;
+}
+
+.markdown-body h3 {
+  font-size: var(--font-size-h3);
+  font-weight: 600;
+  color: var(--syntax-h3);
+  margin-top: 1.5rem;
+  margin-bottom: 0.5rem;
+}
+
+.markdown-body p {
+  margin-bottom: 1rem;
+}
+
+.markdown-body a {
+  color: var(--syntax-link);
+  text-decoration: none;
+}
+
+.markdown-body a:hover {
+  text-decoration: underline;
+}
+
+.markdown-body code {
+  background: var(--code-bg);
+  border: 1px solid var(--border);
+  border-radius: 0.25rem;
+  padding: 0.1em 0.3em;
+  font-size: 0.875em;
+  color: var(--code-text);
+}
+
+.markdown-body pre {
+  background: var(--code-bg);
+  border: 1px solid var(--border);
+  border-radius: 0.375rem;
+  padding: 1rem;
+  overflow-x: auto;
+  margin: 1rem 0;
+}
+
+.markdown-body pre code {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--text-primary);
+}
+
+/* Mermaid caps its SVG at natural size via an INLINE max-width, which left
+   small diagrams (and their text) tiny in the 800px column; only !important
+   can beat an inline style. Scaling to the column keeps text vector-crisp.
+   Wide diagrams already rendered at column width and are unaffected. The
+   child combinator keeps nested icon <svg>s (architecture/icon shapes) out
+   of reach. */
+.mermaid-rendered > svg {
+  width: 100%;
+  height: auto;
+  max-width: none !important;
+}
+
+/* Tailwind v4 Preflight resets `ul, ol { list-style: none }`, so the markers
+   must be re-declared here or every bullet/number in the preview disappears. */
+.markdown-body ul {
+  list-style-type: disc;
+  padding-left: 1.5rem;
+  margin-bottom: 1rem;
+}
+
+.markdown-body ol {
+  list-style-type: decimal;
+  padding-left: 1.5rem;
+  margin-bottom: 1rem;
+}
+
+.markdown-body ul ul {
+  list-style-type: circle;
+}
+
+.markdown-body ul ul ul {
+  list-style-type: square;
+}
+
+.markdown-body li {
+  margin-bottom: 0.25rem;
+}
+
+.markdown-body li::marker {
+  color: var(--syntax-list);
+}
+
+/* GFM task lists ([ ] / [x]) render as <ul class="contains-task-list"> with a
+   checkbox per item — keep those flush and bullet-free so the checkbox stands
+   alone (GitHub-style), without a stray disc beside it. */
+.markdown-body ul.contains-task-list {
+  list-style-type: none;
+  padding-left: 0;
+}
+
+.markdown-body blockquote {
+  border-left: 4px solid var(--accent);
+  background: var(--blockquote-bg);
+  padding: 0.5rem 1rem;
+  margin: 1rem 0;
+  font-style: italic;
+  color: var(--text-secondary);
+  border-radius: 0 0.25rem 0.25rem 0;
+}
+
+.markdown-body strong {
+  font-weight: 600;
+  color: var(--syntax-bold);
+}
+
+/* ==highlight== (remark-flexible-markers). Same translucent amber family as
+   the find-in-preview highlights above (::highlight(dumont-find)) so
+   "highlighted" reads as one concept; the alpha fill composites legibly over
+   every theme's background, and --text-primary keeps the text readable in
+   all four themes. */
+.markdown-body mark {
+  background: rgba(255, 196, 0, 0.35);
+  color: var(--text-primary);
+  padding: 0.05em 0.15em;
+  border-radius: 0.2em;
+}
+
+/* Definition lists (remark-definition-list): bold terms, indented
+   definitions — the classic dictionary layout. */
+.markdown-body dl {
+  margin: 0 0 1rem;
+}
+
+.markdown-body dt {
+  font-weight: 600;
+  color: var(--syntax-bold);
+  margin-top: 0.5rem;
+}
+
+.markdown-body dd {
+  margin: 0 0 0.25rem 1.5rem;
+}
+
+.markdown-body table {
+  /* Fills its .md-table-scroll wrapper when it fits; when it can't shrink, it
+     grows past the wrapper and the wrapper scrolls (see .md-table-scroll).
+     Vertical margin lives on that wrapper, not here, so it collapses normally. */
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.markdown-body th,
+.markdown-body td {
+  border: 1px solid var(--border);
+  padding: 0.5rem;
+  text-align: left;
+}
+
+.markdown-body th {
+  background: var(--bg-secondary);
+  font-weight: 600;
+}
+
+/* ===== Math (KaTeX) — book-style typography =====
+   KaTeX ships its own font stack, so we don't override font-family.
+   We DO style the surrounding block math: center it, give it breathing
+   room above/below the paragraph, and let long equations scroll on
+   narrow viewports instead of overflowing the column. */
+.markdown-body .katex {
+  font-size: 1.05em;
+  color: var(--text-primary);
+}
+
+.markdown-body .katex-display {
+  margin: 1.25rem 0;
+  padding: 0.25rem 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  /* Prefer centered display equations like a printed textbook */
+  text-align: center;
+}
+
+/* Inline math should sit on the prose baseline without inheriting
+   border/background from the global `code` styles. rehype-katex emits
+   <span class="katex"> only, but mhchem can briefly produce nested
+   <code> nodes during parsing — strip the outline so chemistry blocks
+   render cleanly. */
+.markdown-body .katex,
+.markdown-body .katex * {
+  background: transparent;
+  border: 0;
+}
+
+/* Equation numbering (\tag{}) and small labels: keep the muted tone
+   consistent with the rest of the doc rather than KaTeX's default black. */
+.markdown-body .katex .tag {
+  color: var(--text-secondary);
+}
+
+/* On narrow screens, equations may exceed column width. KaTeX wraps the
+   math in <span class="katex-display"><span class="katex">...</span></span>;
+   the inner element controls width, so we constrain the outer scroller. */
+.markdown-body .katex-display > .katex {
+  display: inline-block;
+  white-space: nowrap;
+  max-width: 100%;
+}
+
+/* ===== Syntax Highlighting (code blocks) =====
+   The colors come from the theme, not from here: src/themes/highlight.ts derives
+   them from the theme's markdown tokens (a keyword takes the h2 color, and so
+   on) unless the theme names its own, and ThemeProvider writes the result onto
+   <html>. vs2017-dark names all ten, since Visual Studio's C/C++ palette is what
+   that theme IS. It used to say so three times: a [data-theme="vs2017-dark"]
+   override block here, a literal object in exportUtils, and the generic mapping
+   in both. Exports now bake the same ten values the app paints with. */
+.hljs {
+  background: transparent;
+  color: var(--text-primary);
+}
+
+.hljs-keyword {
+  color: var(--hljs-keyword);
+}
+
+.hljs-string {
+  color: var(--hljs-string);
+}
+
+.hljs-number {
+  color: var(--hljs-number);
+}
+
+.hljs-function {
+  color: var(--hljs-function);
+}
+
+.hljs-comment {
+  color: var(--hljs-comment);
+  font-style: italic;
+}
+
+.hljs-title {
+  color: var(--hljs-title);
+}
+
+.hljs-params {
+  color: var(--hljs-params);
+}
+
+.hljs-built_in {
+  color: var(--hljs-built-in);
+}
+
+.hljs-attr {
+  color: var(--hljs-attr);
+}
+
+.hljs-literal {
+  color: var(--hljs-literal);
+}
+
+/* ===== AI composer (panel input) =====
+   A modern focus state: when the textarea inside is focused, the whole composer
+   lifts with an accent border + soft accent glow. We suppress the textarea's own
+   focus-visible outline (the stray "blue box") since the wrapper owns the ring.
+   color-mix gives a theme-tinted glow from the single --accent variable; on the
+   rare webview that lacks it, the property is ignored and the border still
+   highlights — no broken state. */
+.ai-composer:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 16%, transparent);
+}
+
+.ai-composer textarea:focus,
+.ai-composer textarea:focus-visible {
+  outline: none !important;
+  outline-offset: 0 !important;
+}
+
+/* ===== AI inline diff review (@codemirror/merge unified view) =====
+   The merge package injects a base theme whose diff tints are ~8% opacity —
+   essentially invisible on the near-black editor background, which made it look
+   like "nothing changed until you Accept all". We override with clearly visible,
+   theme-agnostic green (added) / red (removed) so the proposed edits read at a
+   glance. Selectors carry a `.cm-editor` ancestor + !important so they win over
+   the runtime-injected base theme regardless of stylesheet insertion order. */
+:root {
+  --diff-add-bg: rgba(46, 160, 67, 0.20);
+  --diff-add-border: #2ea043;
+  --diff-del-bg: rgba(248, 81, 73, 0.18);
+  --diff-del-border: #f85149;
+  --diff-del-text: #ff7b72;
+}
+
+/* Keyed on the theme's TYPE, not on a list of light theme ids, which is what this
+   was: a light theme Dumont has never heard of (a user's own) still gets a red and
+   a green that read on paper. ThemeProvider writes the attribute. */
+[data-theme-type="light"] {
+  --diff-add-bg: rgba(46, 160, 67, 0.16);
+  --diff-add-border: #2da44e;
+  --diff-del-bg: rgba(207, 34, 46, 0.12);
+  --diff-del-border: #cf222e;
+  --diff-del-text: #cf222e;
+}
+
+/* Inserted / changed lines in the proposed document */
+.cm-editor .cm-changedLine,
+.cm-editor .cm-inlineChangedLine,
+.cm-editor .cm-insertedLine {
+  background-color: var(--diff-add-bg) !important;
+  box-shadow: inset 2px 0 0 var(--diff-add-border);
+}
+
+/* Inline changed text — make the highlight solid, not a thin underline */
+.cm-editor .cm-changedText {
+  background: var(--diff-add-bg) !important;
+  border-radius: 2px;
+}
+
+/* Removed text shown as a block widget above the change */
+.cm-editor .cm-deletedChunk {
+  background-color: var(--diff-del-bg) !important;
+  box-shadow: inset 2px 0 0 var(--diff-del-border);
+  padding: 1px 6px;
+}
+
+.cm-editor .cm-deletedChunk .cm-deletedText,
+.cm-editor .cm-deletedLine {
+  background: transparent !important;
+  color: var(--diff-del-text) !important;
+  text-decoration: line-through;
+  text-decoration-color: var(--diff-del-border);
+}
+
+/* Per-change accept / reject controls inside a deleted chunk */
+.cm-editor .cm-deletedChunk .cm-chunkButtons {
+  gap: 4px;
+}
+
+.cm-editor .cm-deletedChunk .cm-chunkButtons button {
+  font-family: var(--font-body);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1;
+  padding: 3px 8px;
+  border-radius: var(--radius-sm);
+  color: #fff;
+  opacity: 0.92;
+  transition: opacity 0.12s ease, transform 0.1s ease;
+}
+
+.cm-editor .cm-deletedChunk .cm-chunkButtons button:hover {
+  opacity: 1;
+  transform: translateY(-1px);
+}
+
+.cm-editor .cm-deletedChunk .cm-chunkButtons button[name="accept"] {
+  background: var(--diff-add-border) !important;
+}
+
+.cm-editor .cm-deletedChunk .cm-chunkButtons button[name="reject"] {
+  background: var(--diff-del-border) !important;
+}
+
+/* Diff gutter markers pick up the accent so they're visible on every theme */
+.cm-editor .cm-changedLineGutter,
+.cm-editor .cm-inlineChangedLineGutter {
+  background-color: var(--diff-add-border);
+}
+
+.cm-editor .cm-deletedLineGutter {
+  background-color: var(--diff-del-border);
+}

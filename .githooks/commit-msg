@@ -1,0 +1,50 @@
+#!/bin/sh
+# changelog-guard: refuse a commit that changes app source without a
+# CHANGELOG.md entry, so user-facing fixes don't ship undocumented and get
+# backfilled later. Runs at commit-msg (not pre-commit) because the escape
+# marker lives in the message, which pre-commit cannot read.
+#
+# Bypass for one commit by putting [skip changelog] in the message (for a
+# refactor, test, or comment-only change), or with `git commit --no-verify`.
+
+msg_file="$1"
+
+# Merge commits carry an auto-generated message; resolving a merge is not a
+# feature and should not be gated.
+if [ -f "$(git rev-parse --git-dir)/MERGE_HEAD" ]; then
+	exit 0
+fi
+
+# Explicit opt-out for this commit.
+if grep -qiF '[skip changelog]' "$msg_file"; then
+	exit 0
+fi
+
+staged=$(git diff --cached --name-only --diff-filter=ACMRD)
+
+# The changelog itself is part of this commit: nothing to nag about.
+if printf '%s\n' "$staged" | grep -qx 'CHANGELOG.md'; then
+	exit 0
+fi
+
+# App surfaces a user could feel a change from: the two source trees, plus the
+# Tauri config and capability files, where a security or permission change
+# (e.g. the CSP connect-src) lands with no code under src/ at all. Tests,
+# fixtures, and stories are excluded: they legitimately ship without a note.
+source_changed=$(printf '%s\n' "$staged" \
+	| grep -E '^(src/|src-tauri/src/|src-tauri/capabilities/|src-tauri/tauri\.conf\.json$)' \
+	| grep -vE '(\.test\.|\.spec\.|/test/|__tests__/|__mocks__/|\.stories\.)')
+
+if [ -n "$source_changed" ]; then
+	echo "changelog-guard: staged changes touch app source but not CHANGELOG.md." >&2
+	echo >&2
+	echo "  Add an entry under ## [Unreleased] in CHANGELOG.md, or put" >&2
+	echo "  [skip changelog] in the commit message for a refactor, test," >&2
+	echo "  or comment-only change." >&2
+	echo >&2
+	echo "  Source files with no changelog entry:" >&2
+	printf '%s\n' "$source_changed" | sed 's/^/    /' >&2
+	exit 1
+fi
+
+exit 0

@@ -1,0 +1,106 @@
+[package]
+name = "dumont"
+version = "1.0.0"
+description = "A markdown viewer and editor."
+authors = ["IRQ Studio, LLC"]
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[lib]
+# The `_lib` suffix may seem redundant but it is necessary
+# to make the lib name unique and wouldn't conflict with the bin name.
+# This seems to be only an issue on Windows, see https://github.com/rust-lang/cargo/issues/8519
+name = "dumont_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-opener = "2"
+tauri-plugin-fs = "2"
+tauri-plugin-dialog = "2"
+# Forward a double-clicked file to the running instance instead of spawning a
+# second app (and racing it for the session-restore state).
+tauri-plugin-single-instance = "2"
+# Remember the window's size, position and maximized state between launches.
+tauri-plugin-window-state = "2"
+# Watch settings.json so an edit made in another editor applies immediately,
+# the way VS Code reloads its own settings file.
+notify = "8"
+notify-debouncer-full = "0.5"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+# Local version history addresses each document's snapshot directory by the hash
+# of its absolute path (src/history.rs), which keeps the directory name flat and
+# legal on every filesystem. Not a security boundary, just a naming scheme.
+sha2 = "0.10"
+# The feature list must name everything the code actually uses. It did not: `macros`
+# (ai.rs's tokio::select!), `rt` (spawn_blocking in commands.rs) and `io-util`
+# (AsyncReadExt/AsyncWriteExt) were all missing, and the crate compiled only because
+# Cargo unifies features and some OTHER dependency happened to switch them on. Proven,
+# not theorised: removing tauri-plugin-mcp-bridge (a debug-only plugin) breaks the
+# build with "could not find `select` in `tokio`". A dependency dropping a feature we
+# never declared is not a change anyone would review.
+tokio = { version = "1", features = ["fs", "time", "sync", "macros", "rt", "io-util"] }
+# Native HTTP for AI requests (AI-01): the webview's fetch is cross-origin
+# from https://tauri.localhost, so most OpenAI-compatible servers fail the
+# CORS preflight, and plain-http LAN endpoints are blocked by CSP. reqwest
+# has neither restriction. 0.13 matches what tauri already resolves in the
+# lock file so we don't pull a second copy of the HTTP stack.
+reqwest = { version = "0.13", features = ["stream"] }
+futures-util = "0.3"
+# OS keychain for the AI API key (SECURITY-01). Pure-Rust backends: Windows
+# Credential Manager, macOS Keychain, and Linux Secret Service (zbus + crypto-rust,
+# no system C libs needed at build time).
+keyring = { version = "3", features = ["apple-native", "windows-native", "sync-secret-service", "crypto-rust"] }
+# Dev-tooling bridge for UI automation (screenshots, DOM inspection) from
+# Claude Code's Tauri MCP server. Registered only in debug builds (lib.rs),
+# so release binaries never start its WebSocket server.
+tauri-plugin-mcp-bridge = "0.11"
+
+# Auto-update from GitHub Releases (latest.json) + relaunch after install.
+# Desktop-only: the updater has no mobile implementation.
+[target."cfg(not(any(target_os = \"android\", target_os = \"ios\")))".dependencies]
+tauri-plugin-updater = "2"
+tauri-plugin-process = "2"
+
+# Silent "Save as PDF" export: render the document in a hidden WebView2 and call
+# its native PrintToPdf (no OS print dialog). Versions track what wry/tauri
+# already resolve so we don't pull a second copy of the Windows bindings.
+[target."cfg(windows)".dependencies]
+webview2-com = "0.38"
+windows = "0.61"
+
+# Same silent PDF export on macOS: an NSPrintOperation on the hidden WKWebView
+# with a save-to-URL job disposition writes the PDF with no dialogs. Versions
+# track what wry/tauri already resolve so we don't pull a second copy of the
+# Apple bindings.
+[target."cfg(target_os = \"macos\")".dependencies]
+objc2 = "0.6"
+objc2-foundation = "0.3"
+objc2-app-kit = "0.3"
+objc2-web-kit = "0.3"
+
+# There was no [profile.release] at all, so release built on Cargo's defaults: no LTO,
+# 16 codegen units, and every symbol kept. That is 17.1 MB of binary. These three
+# settings take it to 10.7 MB, a 37% cut, and change no behaviour whatsoever.
+#
+# Two things deliberately NOT set, both of which are smaller still:
+#
+#   opt-level = "s"   -> 8.6 MB, but it optimises for size over speed, and the Rust side
+#                        is where cross-file search and the backlink scan walk thousands
+#                        of files. Trading that for 2 MB is a bad deal in an app whose
+#                        Rust exists to be fast at exactly those two things.
+#
+#   panic = "abort"   -> 6.6 MB, and it is the biggest single win, which is what makes it
+#                        tempting. It turns any panic into an immediate process kill. In
+#                        a text editor the thing in memory at that moment is the user's
+#                        unsaved work. Unwinding is worth 4 MB.
+[profile.release]
+codegen-units = 1
+lto = true
+strip = true

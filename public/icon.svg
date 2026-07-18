@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <!--
+    Dumont — IRQ Studio.
+
+    A North Idaho ridgeline over a terminal prompt. The peaks are deliberately
+    UNEQUAL in height and width: uniform peaks read as the letter "M".
+
+    Palette is IRQ Studio's — lake teal on granite, pine in the shadow face.
+    Explicitly NOT orange/black (reads as Y Combinator) and explicitly nothing
+    from Tron: no Grid blue, no neon, no circuitry. The name is a nod to the I/O
+    Tower guardian and the homage stops at the etymology.
+  -->
+  <defs>
+    <linearGradient id="lake" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#6fbfb7"/>
+      <stop offset="1" stop-color="#5aa9a2"/>
+    </linearGradient>
+  </defs>
+
+  <!-- granite field -->
+  <rect width="512" height="512" rx="112" fill="#22272b"/>
+
+  <!-- ridgeline: unequal peaks, unequal spacing -->
+  <path d="M 88 344 L 168 232 L 214 290 L 286 146 L 348 256 L 388 210 L 424 344 Z"
+        fill="url(#lake)"/>
+
+  <!-- pine shadow face, so the ridge reads as depth rather than a zigzag -->
+  <path d="M 286 146 L 348 256 L 388 210 L 424 344 L 302 344 Z"
+        fill="#2d6a4f" opacity="0.5"/>
+
+  <!-- terminal prompt: caret and cursor, monospace metrics -->
+  <path d="M 152 396 L 190 418 L 152 440"
+        fill="none" stroke="#e8eaec" stroke-width="18"
+        stroke-linecap="round" stroke-linejoin="round"/>
+  <rect x="212" y="410" width="76" height="17" rx="8" fill="#5aa9a2"/>
+</svg>
