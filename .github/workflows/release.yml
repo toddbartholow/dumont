@@ -6,6 +6,11 @@ name: Release
 # version-bump / changelog-roll logic below still runs on manual dispatch.
 on:
   workflow_dispatch:
+    inputs:
+      skip_bump:
+        description: 'Release the version already in the files, without the patch bump. For a hand-set version (a major or minor bump). The changelog still rolls.'
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -30,6 +35,33 @@ jobs:
           # Get current version from tauri.conf.json
           CURRENT_VERSION=$(jq -r '.version' src-tauri/tauri.conf.json)
           echo "Current version: $CURRENT_VERSION"
+
+          if [ "${{ inputs.skip_bump }}" = "true" ]; then
+            # Skip-bump path: release the version exactly as committed. For a
+            # version set by hand (a major or minor bump), where the automatic
+            # patch bump below would overshoot it.
+            if git tag -l "v$CURRENT_VERSION" | grep -q "v$CURRENT_VERSION"; then
+              echo "Tag v$CURRENT_VERSION already exists; set a new version in the files first" >&2
+              exit 1
+            fi
+
+            # The changelog still rolls, or the release notes would come out
+            # empty. Skipped if a section for this version was already rolled
+            # by hand.
+            if ! grep -qF "## [$CURRENT_VERSION]" CHANGELOG.md; then
+              RELEASE_DATE=$(date -u +%Y-%m-%d)
+              sed -i "0,/^## \[Unreleased\]/s//## [Unreleased]\n\n## [$CURRENT_VERSION] - $RELEASE_DATE/" CHANGELOG.md
+              git config user.name "github-actions[bot]"
+              git config user.email "github-actions[bot]@users.noreply.github.com"
+              git add CHANGELOG.md
+              git commit -m "chore: roll changelog for $CURRENT_VERSION [skip ci]"
+              git push
+            fi
+
+            echo "should_release=true" >> $GITHUB_OUTPUT
+            echo "version=$CURRENT_VERSION" >> $GITHUB_OUTPUT
+            exit 0
+          fi
 
           # Check if tag for current version exists
           if git tag -l "v$CURRENT_VERSION" | grep -q "v$CURRENT_VERSION"; then

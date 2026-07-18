@@ -11,6 +11,14 @@ divider is the upstream project's changelog, retained for provenance.
 
 ## [Unreleased]
 
+### Changed
+
+- **Version 1.0.0.** The feature set that accumulated through the 0.x series is
+  declared stable: the reader-first views, settings.json configuration, themes,
+  exports, AI editing, and the security hardening around all of them. No
+  functional changes since 0.5.0. The project history was consolidated to a
+  single root commit and the 0.x releases were retired.
+
 ## [0.5.0] - 2026-07-16
 
 ### Fixed
