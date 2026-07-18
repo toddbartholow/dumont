@@ -11,6 +11,8 @@ divider is the upstream project's changelog, retained for provenance.
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-07-18
+
 ### Changed
 
 - **Version 1.0.0.** The feature set that accumulated through the 0.x series is
