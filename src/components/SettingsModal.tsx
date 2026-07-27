@@ -1,7 +1,7 @@
 // Modified by IRQ Studio, LLC (2026) from an Apache-2.0 licensed original.
 // See NOTICE for attribution and license terms.
 
-import { lazy, Suspense, useCallback, useEffect, useId, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useId, useRef, useState, type ReactNode } from "react";
 import type { SettingsJsonHandle } from "./SettingsJsonEditor";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { useTheme } from "../context/ThemeContext";
@@ -23,11 +23,11 @@ import { setAIKey, aiKeyPresent } from "../utils/persistence";
 import { AI_PROVIDERS, matchProvider, type AIProvider } from "../utils/aiProviders";
 import { attachFocusTrap } from "../utils/focusTrap";
 import { isValidEndpoint, runAIAction } from "../utils/aiAssist";
-import { THEMES, FONTS, fontStack, isBundledFont } from "../utils/appearanceOptions";
+import { THEMES, FONTS, fontStack, isBundledFont, fontOptionsFor } from "../utils/appearanceOptions";
 import { resolveTheme } from "../themes";
 import { themesDir } from "../themes/userThemes";
 import { FontSizeField } from "./FontSizeField";
-import { Select, type SelectOption } from "./Select";
+import { Select, ThemeSwatch, type SelectOption } from "./Select";
 import { READER_WIDTH_TIERS, readerWidthHint } from "../utils/readerWidth";
 import { getAppVersion, BUILD_VERSION } from "../utils/appVersion";
 
@@ -65,10 +65,10 @@ const READER_WIDTH_OPTIONS: readonly SelectOption<string>[] = READER_WIDTH_TIERS
     hint: readerWidthHint(t),
 }));
 
-// Themes and fonts come from utils/appearanceOptions.ts — the same list the gear
-// dropdown renders, so the two surfaces can't drift apart again.
+// Themes come from utils/appearanceOptions.ts — the same list the gear dropdown
+// renders, so the two surfaces can't drift apart again. The fonts arrive as
+// combobox options from the same module, via fontOptionsFor().
 const themes = THEMES;
-const fonts = FONTS;
 
 interface ToggleRowProps {
     label: string;
@@ -98,6 +98,72 @@ function ToggleRow({ label, description, checked, onChange }: ToggleRowProps) {
                 />
             </span>
         </button>
+    );
+}
+
+interface ControlRowProps {
+    label: string;
+    description: string;
+    /**
+     * Reserve room under the control for a validation message.
+     *
+     * FontSizeField positions its `role="alert"` with `top-full`, so inside a
+     * divided group it would otherwise be drawn over the next row's label the
+     * moment you typed something out of range. Padding is unconditional rather
+     * than added when the error appears, because a row that grows mid-keystroke
+     * moves everything below it while the user is still typing.
+     */
+    reserveBelow?: boolean;
+    /**
+     * Render the label as `<label htmlFor>` rather than a span, giving the
+     * control the click-to-focus target a native form row has.
+     *
+     * Only for a row whose control is a LABELABLE element named by that label
+     * alone. Neither combobox qualifies: Select's trigger is a `<button>` named
+     * through aria-labelledby so it can append its current value, and
+     * FontSizeField points its input AND its listbox at the same id. A `<label>`
+     * over either would be a second name for the same control.
+     */
+    labelable?: boolean;
+    /** Given the ids of the row's own label and description, so the control can
+     *  point at them instead of carrying a second copy of either. `controlId` is
+     *  for the labelable case, where the label points at the control instead. */
+    children: (ids: { labelId: string; descriptionId: string; controlId: string }) => ReactNode;
+}
+
+/**
+ * A settings row whose control is a real form control rather than a switch.
+ *
+ * Same geometry as ToggleRow, deliberately: label and description on the left,
+ * control right-aligned in a fixed 220px slot so four different widgets line up
+ * on one spine. That alignment is what makes the group read as one thing; the
+ * widgets themselves differ because the choices differ (a listbox for a font, a
+ * text field for a family name, an editable combobox for a size).
+ *
+ * The row owns the label. Each control is told to reference it rather than
+ * rendering its own, which is what keeps a row from being labelled twice: the
+ * Appearance pane used to stack an <h3> over a control that named itself, three
+ * times, and in one case the two names disagreed ("Font size" over a field that
+ * called itself "Size").
+ */
+function ControlRow({ label, description, reserveBelow, labelable, children }: ControlRowProps) {
+    const baseId = useId();
+    const labelId = `${baseId}-label`;
+    const descriptionId = `${baseId}-description`;
+    const controlId = `${baseId}-control`;
+    const labelClass = "text-sm font-medium text-[var(--text-primary)]";
+    return (
+        <div className={`w-full flex items-start justify-between gap-4 px-3.5 py-3 ${reserveBelow ? "pb-6" : ""}`}>
+            <div className="flex flex-col items-start min-w-0">
+                {labelable ? (
+                    <label id={labelId} htmlFor={controlId} className={labelClass}>{label}</label>
+                ) : (
+                    <span id={labelId} className={labelClass}>{label}</span>
+                )}
+                <span id={descriptionId} className="text-[11px] text-[var(--text-secondary)] mt-0.5">{description}</span>
+            </div>
+            <div className="w-[220px] shrink-0">{children({ labelId, descriptionId, controlId })}</div>
+        </div>
     );
 }
 
@@ -424,6 +490,17 @@ export function SettingsModal({ isOpen, onClose, initialJson = false, onAiKeyPre
 
     const matches = (text: string) => !filter || text.toLowerCase().includes(filter.toLowerCase());
 
+    // Whether the Appearance row group has anything left to show. Without this a
+    // filter matching only "theme" would leave an empty bordered box under the
+    // grid, which reads as a rendering fault rather than as a narrowed list.
+    //
+    // Each guard string must be at least as wide as the row's own label, because
+    // `matches` asks whether the guard CONTAINS what you typed. "size" was
+    // narrower than the row it guards, so typing "font" showed Font and Custom
+    // font and hid Font size, and typing the row's actual name hid all four.
+    const appearanceRowsShown =
+        matches("font") || matches("custom font") || matches("font size") || matches("reader width");
+
     return (
         <div className="fixed inset-0 z-[100] flex items-center justify-center" role="dialog" aria-modal="true" aria-label="Settings">
             <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={requestClose} aria-hidden="true" />
@@ -549,25 +626,55 @@ export function SettingsModal({ isOpen, onClose, initialJson = false, onAiKeyPre
                             <>
                                 {matches("theme") && (
                                     <section>
-                                        <h3 className="text-xs font-semibold text-[var(--text-secondary)] uppercase tracking-wider mb-2">Theme</h3>
-                                        {/* The grid SCROLLS, and the height is capped rather
-                                            than left to the content: the list is ten built-ins
-                                            plus however many themes the user has written, which
-                                            is unbounded. Uncapped, it pushed Font and Font size
-                                            off the bottom of the pane and the Appearance
-                                            settings below it became unreachable without a long
-                                            scroll past a wall of swatches.
+                                        {/* "Open the themes folder" rides the heading rather than
+                                            floating below the grid. It is an affordance about the
+                                            theme LIST, so on the list's own header it reads as
+                                            attached to something; down there it owned nothing and
+                                            still spent a full section gap saying so. */}
+                                        <div className="flex items-baseline justify-between gap-3 mb-2">
+                                            <h3 className="text-xs font-semibold text-[var(--text-secondary)] uppercase tracking-wider">Theme</h3>
+                                            <button
+                                                type="button"
+                                                onClick={() => void revealThemes()}
+                                                className="shrink-0 text-[11px] text-[var(--text-secondary)] hover:text-[var(--text-primary)] underline underline-offset-2"
+                                            >
+                                                Open the themes folder
+                                            </button>
+                                        </div>
+                                        {/* The tile is a ROW, not a card: a 20px chip and the name
+                                            beside it, 40px tall. It was a 48px chip stacked over a
+                                            centered label in a 94px card, which is a 2:1 ratio of
+                                            padding to content, and that one number was what made
+                                            this pane 1000px long. Ten built-ins now occupy 132px
+                                            instead of 268, which is what lets Font size and Reader
+                                            width sit above the fold at all. A theme is legible from
+                                            20px of it: appearanceOptions.ts picks the ACCENT as the
+                                            second tone precisely because that is the tone that names
+                                            a theme on sight, and 48px did not do that job four times
+                                            better than 20px does.
 
-                                            p-1 is not decoration: the selected swatch wears a
-                                            ring-2 drawn OUTSIDE its border box, and an
-                                            overflow container clips it flush at the edges. The
-                                            padding gives the ring somewhere to land.
+                                            Card-height also used to depend on the theme list, since
+                                            a name that wrapped to two lines stretched its whole grid
+                                            row. Truncating in one line makes the geometry fixed.
 
-                                            auto-fill, not a fixed column count: a fixed
-                                            grid-cols-4 left the 5th theme stranded alone
-                                            on its own row. */}
-                                        <div className="max-h-[min(268px,38vh)] overflow-y-auto p-1 -m-1">
-                                        <div className="grid [grid-template-columns:repeat(auto-fill,minmax(96px,1fr))] gap-2">
+                                            The grid still SCROLLS and is still capped rather than
+                                            left to the content: the list is ten built-ins plus
+                                            however many themes the user has written, which is
+                                            unbounded. The cap is derived from the budget, not
+                                            picked: 519px of visible pane, less the heading, the
+                                            section gap and the 283px row group below, leaves 184 —
+                                            four rows of tiles. Ten built-ins do not scroll, and six
+                                            user themes fit before any do.
+
+                                            p-1 is not decoration: the selected tile wears a ring-2
+                                            drawn OUTSIDE its border box, and an overflow container
+                                            clips it flush at the edges. The padding gives the ring
+                                            somewhere to land.
+
+                                            auto-fill, not a fixed column count: a fixed grid-cols-4
+                                            left the 5th theme stranded alone on its own row. */}
+                                        <div className="max-h-[min(184px,26vh)] overflow-y-auto p-1 -m-1">
+                                        <div className="grid [grid-template-columns:repeat(auto-fill,minmax(132px,1fr))] gap-1.5">
                                             {[
                                                 ...themes,
                                                 // The user's own, with a swatch built from the theme
@@ -588,17 +695,22 @@ export function SettingsModal({ isOpen, onClose, initialJson = false, onAiKeyPre
                                                     key={t.id}
                                                     ref={theme === t.id ? selectedThemeRef : undefined}
                                                     onClick={() => setTheme(t.id)}
-                                                    className={`flex flex-col items-center gap-2 p-3 rounded-[var(--radius-md)] transition-all ${theme === t.id
+                                                    // The ring is the only thing that said which
+                                                    // theme was active, and a ring is not exposed
+                                                    // to anything: a screen reader heard eleven
+                                                    // identical "Nord, button" with no way to tell
+                                                    // which one was on. The font cards next door
+                                                    // already carried aria-pressed, so this was an
+                                                    // inconsistency as well as a defect.
+                                                    aria-pressed={theme === t.id}
+                                                    className={`h-10 px-2 flex items-center gap-2 rounded-[var(--radius-md)] transition-all ${theme === t.id
                                                         ? "ring-2 ring-[var(--focus-ring)] bg-[var(--bg-hover)]"
                                                         : "hover:bg-[var(--bg-hover)]"
                                                         }`}
                                                     title={t.name}
                                                 >
-                                                    <div className="w-12 h-12 rounded-[var(--radius-md)] overflow-hidden border border-[var(--border)] flex items-center justify-center" style={{ backgroundColor: t.colors[0] }}>
-                                                        <div className="w-1/2 h-full" style={{ backgroundColor: t.colors[0] }}></div>
-                                                        <div className="w-1/2 h-full" style={{ backgroundColor: t.colors[1] }}></div>
-                                                    </div>
-                                                    <span className="text-[11px] text-[var(--text-primary)] text-center leading-tight">{t.name}</span>
+                                                    <ThemeSwatch colors={t.colors} />
+                                                    <span className="min-w-0 truncate text-[11px] text-[var(--text-primary)]">{t.name}</span>
                                                 </button>
                                             ))}
                                         </div>
@@ -614,92 +726,102 @@ export function SettingsModal({ isOpen, onClose, initialJson = false, onAiKeyPre
                                         ))}
                                     </div>
                                 )}
-                                {matches("theme") && (
-                                    <button
-                                        type="button"
-                                        onClick={() => void revealThemes()}
-                                        className="text-[11px] text-[var(--text-secondary)] hover:text-[var(--text-primary)] underline underline-offset-2"
-                                    >
-                                        Open the themes folder
-                                    </button>
-                                )}
-                                {matches("font") && (
-                                    <section>
-                                        <h3 className="text-xs font-semibold text-[var(--text-secondary)] uppercase tracking-wider mb-2">Font</h3>
-                                        <div className="grid grid-cols-2 gap-2">
-                                            {fonts.map((f) => {
-                                                const active = font === f.id;
-                                                return (
-                                                    <button
-                                                        key={f.id}
-                                                        onClick={() => setFont(f.id)}
-                                                        aria-pressed={active}
-                                                        className={`flex items-center justify-between gap-2 px-3 py-2.5 rounded-[var(--radius-md)] border text-left transition-all ${active
-                                                            ? "border-[var(--focus-ring)] bg-[var(--bg-hover)] ring-1 ring-[var(--focus-ring)]"
-                                                            : "border-[var(--border)] hover:border-[var(--text-muted)] hover:bg-[var(--bg-hover)]"
-                                                            }`}
-                                                    >
-                                                        <span className="min-w-0">
-                                                            <span className="block text-[15px] leading-tight text-[var(--text-primary)] truncate" style={{ fontFamily: f.stack }}>{f.name}</span>
-                                                            <span className="block text-[10px] text-[var(--text-secondary)] mt-0.5">{f.kind}</span>
-                                                        </span>
-                                                        {active && <span className="material-symbols-outlined text-[18px] text-[var(--accent)] shrink-0">check</span>}
-                                                    </button>
-                                                );
-                                            })}
-                                        </div>
-                                    </section>
-                                )}
-                                {matches("custom font") && (
-                                    <section>
-                                        <h3 className="text-xs font-semibold text-[var(--text-secondary)] uppercase tracking-wider mb-2">Custom font</h3>
-                                        <input
-                                            type="text"
-                                            value={isBundledFont(font) ? "" : font}
-                                            onChange={(e) => setFont(e.target.value.trim() || FONTS[0].id)}
-                                            placeholder="Iosevka, monospace"
-                                            aria-label="Custom font family"
-                                            spellCheck={false}
-                                            // Previews itself in the face being named, which is the
-                                            // only feedback that tells you whether the font is
-                                            // actually installed: a name the system cannot resolve
-                                            // simply renders in the fallback.
-                                            style={{ fontFamily: isBundledFont(font) ? undefined : fontStack(font) }}
-                                            className="w-full max-w-[420px] px-3 py-2 text-sm bg-[var(--bg-input)] border border-[var(--border)] rounded-[var(--radius-md)] text-[var(--text-primary)] outline-none focus:border-[var(--focus-ring)]"
-                                        />
-                                        <p className="mt-2 text-[11px] text-[var(--text-secondary)]">
-                                            Any font installed on this machine, named as a CSS font
-                                            family. If it renders in the fallback face, the name did
-                                            not resolve. Clearing this returns to the fonts above.
-                                        </p>
-                                    </section>
-                                )}
-                                {matches("size") && (
-                                    <section>
-                                        <h3 className="text-xs font-semibold text-[var(--text-secondary)] uppercase tracking-wider mb-2">Font size</h3>
-                                        <div className="max-w-[280px]">
-                                            <FontSizeField value={fontSize} onChange={setFontSize} />
-                                        </div>
-                                        <p className="mt-2 text-[11px] text-[var(--text-secondary)]">
-                                            Pick a preset or type any size. The editor scales with it.
-                                        </p>
-                                    </section>
-                                )}
-                                {matches("reader width") && (
-                                    <section>
-                                        <h3 className="text-xs font-semibold text-[var(--text-secondary)] uppercase tracking-wider mb-2">Reader width</h3>
-                                        <div className="max-w-[280px]">
-                                            <Select
+                                {/* One divided group, the same pattern the Editor and Files
+                                    panes use. It replaces four <section>s that each carried
+                                    an <h3>, a control and a paragraph of help, which is what
+                                    put Reader width ~900px down a 519px pane.
+
+                                    NO overflow-hidden, unlike the Editor group. That class is
+                                    there to clip the row backgrounds at the rounded corners,
+                                    and these rows hold controls that open absolutely
+                                    positioned listboxes: it would clip them exactly as the
+                                    gear panel's own scroll guard once did (see the note in
+                                    SettingsMenu.tsx). Nothing here paints to the corners, so
+                                    there is nothing to clip anyway. */}
+                                {appearanceRowsShown && (
+                                    <div className="rounded-[var(--radius-lg)] border border-[var(--border)] divide-y divide-[var(--border-subtle)]">
+                                        {matches("font") && (
+                                            <ControlRow
+                                                label="Font"
+                                                description="Body font for the reader and the editor."
+                                            >
+                                                {({ labelId, descriptionId }) => (
+                                                    <Select
+                                                        labelledBy={labelId}
+                                                        describedBy={descriptionId}
+                                                        value={font}
+                                                        // Includes the user's own family when they
+                                                        // have typed one below, tagged "Custom", so
+                                                        // the two rows visibly refer to each other
+                                                        // and clearing the field visibly reverts
+                                                        // this one. The old copy said so in prose.
+                                                        options={fontOptionsFor(font)}
+                                                        onChange={setFont}
+                                                    />
+                                                )}
+                                            </ControlRow>
+                                        )}
+                                        {matches("custom font") && (
+                                            <ControlRow
+                                                label="Custom font"
+                                                description="Any font installed on this machine, named as a CSS family. If it renders in the fallback face, the name did not resolve."
+                                                // The one row of the four whose control is a plain
+                                                // <input>, so it is the one that can have the
+                                                // click-to-focus target a native form row gives you.
+                                                labelable
+                                            >
+                                                {({ descriptionId, controlId }) => (
+                                                    <input
+                                                        id={controlId}
+                                                        type="text"
+                                                        value={isBundledFont(font) ? "" : font}
+                                                        onChange={(e) => setFont(e.target.value.trim() || FONTS[0].id)}
+                                                        placeholder="Iosevka, monospace"
+                                                        aria-describedby={descriptionId}
+                                                        spellCheck={false}
+                                                        // Previews itself in the face being named, which is the
+                                                        // only feedback that tells you whether the font is
+                                                        // actually installed: a name the system cannot resolve
+                                                        // simply renders in the fallback.
+                                                        style={{ fontFamily: isBundledFont(font) ? undefined : fontStack(font) }}
+                                                        className="w-full h-9 px-3 text-sm bg-[var(--bg-input)] border border-[var(--border)] rounded-[var(--radius-md)] text-[var(--text-primary)] outline-none focus:border-[var(--focus-ring)]"
+                                                    />
+                                                )}
+                                            </ControlRow>
+                                        )}
+                                        {matches("font size") && (
+                                            <ControlRow
+                                                label="Font size"
+                                                description="Headings, line height and the editor scale with it."
+                                                reserveBelow
+                                            >
+                                                {({ labelId, descriptionId }) => (
+                                                    <FontSizeField
+                                                        labelledBy={labelId}
+                                                        describedBy={descriptionId}
+                                                        value={fontSize}
+                                                        onChange={setFontSize}
+                                                    />
+                                                )}
+                                            </ControlRow>
+                                        )}
+                                        {matches("reader width") && (
+                                            <ControlRow
                                                 label="Reader width"
-                                                value={readerWidth}
-                                                options={READER_WIDTH_OPTIONS}
-                                                onChange={setReaderWidth}
-                                            />
-                                        </div>
-                                        <p className="mt-2 text-[11px] text-[var(--text-secondary)]">
-                                            How wide the reading column is. Code blocks and tables extend wider so long lines and tables are not clipped.
-                                        </p>
-                                    </section>
+                                                description="Width of the prose column. Code blocks and tables extend wider so they are not clipped."
+                                            >
+                                                {({ labelId, descriptionId }) => (
+                                                    <Select
+                                                        labelledBy={labelId}
+                                                        describedBy={descriptionId}
+                                                        value={readerWidth}
+                                                        options={READER_WIDTH_OPTIONS}
+                                                        onChange={setReaderWidth}
+                                                    />
+                                                )}
+                                            </ControlRow>
+                                        )}
+                                    </div>
                                 )}
                             </>
                         )}

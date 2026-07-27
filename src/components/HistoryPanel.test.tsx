@@ -9,7 +9,21 @@ vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 const mockInvoke = invoke as Mock;
 
 const FILE = "/notes/engine.md";
-const NOW = Date.now();
+
+/**
+ * A fixed "now": Wednesday 12 March 2025, 14:32:00 local time. The same instant
+ * history.test.ts pins its formatter tests to.
+ *
+ * This used to be `Date.now()`, which made the file fail for three hours every
+ * night. formatSnapshotTime switches from "3 hours ago" to "yesterday 22:32" on
+ * the CALENDAR day, deliberately (see its tests), so between midnight and 03:00
+ * the three-hour-old fixture below fell on the previous day and the row read
+ * "yesterday ..." instead. The formatter was right and the clock was the variable,
+ * which is exactly the thing a test should not leave free.
+ *
+ * Mid-afternoon, so every fixture here sits well inside the same calendar day.
+ */
+const NOW = new Date(2025, 2, 12, 14, 32, 0).getTime();
 
 const snapshots: SnapshotMeta[] = [
   { id: "3", timestamp: NOW - 2 * 60_000, bytes: 2048 },
@@ -42,10 +56,19 @@ const button = (name: string) => screen.getByRole("button", { name });
 
 describe("HistoryPanel", () => {
   beforeEach(() => {
+    // Date ONLY. The panel re-renders its relative labels on a window.setInterval
+    // tick, and Testing Library's waitFor picks its real-timer path by sniffing
+    // setTimeout — faking the whole timer suite would stall both and leave every
+    // `await waitFor` in this file hanging on a clock nothing advances.
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(NOW);
     mockInvoke.mockReset();
     withSnapshots();
   });
-  afterEach(cleanup);
+  afterEach(() => {
+    vi.useRealTimers();
+    cleanup();
+  });
 
   it("lists the snapshots newest first, with their age and size", async () => {
     render(<HistoryPanel {...props()} />);
@@ -80,7 +103,11 @@ describe("HistoryPanel", () => {
     await waitFor(() =>
       expect(onPreview).toHaveBeenCalledWith(
         "content of snapshot 2",
-        expect.stringMatching(/^Snapshot from (today|yesterday) at \d{2}:\d{2}$/)
+        // Exact, now that the clock is fixed. The `(today|yesterday)` this used to
+        // allow was the same wall-clock leak as the one in the fixture above: a
+        // snapshot taken 30 minutes ago is only "yesterday" if the test happens to
+        // run in the first half hour after midnight.
+        "Snapshot from today at 14:02"
       )
     );
     // Nothing was written. Performing the restore is the diff view's job, and the

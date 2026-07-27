@@ -11,6 +11,45 @@ divider is the upstream project's changelog, retained for provenance.
 
 ## [Unreleased]
 
+### Changed
+
+- **Every Appearance setting now fits on one screen.** The pane was about twice as
+  tall as the window it opened in, so Font size and Reader width sat below the
+  fold behind a wall of theme swatches, and Reader width in particular was
+  effectively undiscoverable: you had to scroll past everything else to learn it
+  existed. The theme tiles are now a compact row with the color chip beside the
+  name rather than a card stacked above it, which reclaims more than half the
+  height on its own, and Font, Custom font, Font size and Reader width sit in one
+  divided group of rows, the same shape the Editor and Files panes already used.
+  "Open the themes folder" moved onto the Theme heading, next to the list it
+  opens.
+
+### Fixed
+
+- **Dropdowns at the foot of the Settings panes no longer open into a wall.** A
+  list decided whether it had room below it by measuring against the window,
+  which is the wrong edge when the control sits inside a scrolling pane: the
+  Reader width list would open downward and be clipped by the pane it lives in
+  rather than flipping to open upward. It now measures against whatever actually
+  clips it.
+
+- **Screen readers can tell which theme is selected.** The theme tiles marked the
+  active theme with a ring and nothing else, so assistive technology heard a row
+  of identically named buttons with no indication of which one was on.
+
+- **Each Appearance setting is announced by one name instead of two.** Reader
+  width was labelled twice over, and the font size control called itself "Size"
+  under a heading that said "Font size". Each row now carries a single label that
+  its control refers to.
+
+- **The check mark on the selected font meets the contrast floor.** It was drawn
+  in the accent color, which falls to 2.37:1 against a hovered row in the VS 2017
+  Dark theme, well under the 3:1 a non-text indicator needs.
+
+- **Searching the settings for "font" now finds Font size.** The row was matched
+  against the word "size" alone, so the obvious search for it hid it, and typing
+  its actual name hid every Appearance setting at once.
+
 ## [1.0.0] - 2026-07-18
 
 ### Changed

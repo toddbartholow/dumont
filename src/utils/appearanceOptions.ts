@@ -11,6 +11,7 @@
  * read from the theme itself (src/themes).
  */
 import type { Theme, FontFamily } from '../context/ThemeContext';
+import type { SelectOption } from '../components/Select';
 import { BUILTIN_THEMES, resolveTheme } from '../themes';
 
 export interface ThemeOption {
@@ -71,6 +72,36 @@ export const FONTS: readonly FontOption[] = [
 /** True when `font` is one of the bundled options rather than a custom stack. */
 export function isBundledFont(font: string): boolean {
     return FONTS.some((f) => f.id === font);
+}
+
+/**
+ * The bundled fonts as combobox options. Each previews in its own face, which is
+ * the reason both surfaces use a custom listbox and not a native <select>
+ * (WKWebView ignores font-family on <option>).
+ */
+export const FONT_OPTIONS: readonly SelectOption<FontFamily>[] = FONTS.map((f) => ({
+    value: f.id,
+    label: f.name,
+    hint: f.kind,
+    style: { fontFamily: f.stack },
+}));
+
+/**
+ * The bundled fonts, plus the user's own if they have set one.
+ *
+ * `appearance.font` can name any font installed on the machine, so the value need
+ * not be in the list. Without this the dropdown would match nothing and render an
+ * empty box, which reads as a bug: the setting IS applied, the picker just cannot
+ * name it. Appending it keeps the current font visible and selectable, and it is
+ * what makes the settings modal's Custom font row legible from the Font row above
+ * it: type a family name and the Font row shows it, tagged "Custom".
+ */
+export function fontOptionsFor(font: FontFamily): readonly SelectOption<FontFamily>[] {
+    if (isBundledFont(font)) return FONT_OPTIONS;
+    return [
+        ...FONT_OPTIONS,
+        { value: font, label: font, hint: "Custom", style: { fontFamily: fontStack(font) } },
+    ];
 }
 
 /**

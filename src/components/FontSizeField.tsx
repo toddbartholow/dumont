@@ -5,11 +5,29 @@ import {
     MAX_FONT_SIZE,
     clampFontSize,
 } from "../utils/typeScale";
+import { clippingBounds } from "../utils/popover";
 
-interface FontSizeFieldProps {
+/**
+ * Its own label, or someone else's id. Never both, for the reason spelled out on
+ * Select's matching union: a `label` that is passed and then never rendered is a
+ * second name for the control that nothing can ever show you has drifted.
+ *
+ * `label` defaults to "Size" on the self-labelling arm, which is what the gear
+ * panel's 68px label column has room for. The settings modal is on the other
+ * arm and its row heading says "Font size".
+ */
+type FontSizeNaming =
+    | { label?: string; labelledBy?: undefined }
+    | { label?: undefined; labelledBy: string };
+
+type FontSizeFieldProps = FontSizeNaming & {
     value: number;
     onChange: (size: number) => void;
-}
+    /** Id of descriptive text for the control (a settings row's help line).
+     *  Appended to the field's own hint and error descriptions rather than
+     *  replacing them: the allowed range still has to be announced. */
+    describedBy?: string;
+};
 
 /**
  * An editable combobox for the font size: pick a preset, or type any size.
@@ -22,7 +40,7 @@ interface FontSizeFieldProps {
  * preset. Arrow keys are the exception: ±1px is bounded and intentional, and
  * live feedback is the whole point of nudging.
  */
-export function FontSizeField({ value, onChange }: FontSizeFieldProps) {
+export function FontSizeField({ value, onChange, label = "Size", labelledBy, describedBy }: FontSizeFieldProps) {
     const [draft, setDraft] = useState(String(value));
     const [isOpen, setIsOpen] = useState(false);
     const [activeIndex, setActiveIndex] = useState(0);
@@ -33,9 +51,16 @@ export function FontSizeField({ value, onChange }: FontSizeFieldProps) {
     const listRef = useRef<HTMLUListElement>(null);
 
     const baseId = useId();
-    const labelId = `${baseId}-label`;
+    const labelId = labelledBy ?? `${baseId}-label`;
     const listboxId = `${baseId}-listbox`;
     const optionId = (i: number) => `${baseId}-opt-${i}`;
+
+    // Both the preset list and the error message hang off the ROOT, so they have
+    // to clear the built-in label column. With an external label there is none,
+    // and an 80px inset would push them off the right of a narrow slot. The error
+    // message is the one that matters: misplacing it strands the only feedback the
+    // user who just typed something wrong is going to get.
+    const popupInset = labelledBy ? "left-0" : "left-[80px]";
 
     // Follow the value when it changes elsewhere (a preset click, a reset, or
     // another surface editing the same setting).
@@ -184,6 +209,8 @@ export function FontSizeField({ value, onChange }: FontSizeFieldProps) {
         return () => document.removeEventListener("pointerdown", onPointerDown);
     }, [isOpen]);
 
+    // Against the clipping ancestor, not the window — see the matching note in
+    // Select.tsx and utils/popover.ts.
     useLayoutEffect(() => {
         if (!isOpen) return;
         const input = inputRef.current;
@@ -191,14 +218,17 @@ export function FontSizeField({ value, onChange }: FontSizeFieldProps) {
         if (!input || !list) return;
         const rect = input.getBoundingClientRect();
         const needed = list.offsetHeight + 8;
-        setFlipUp(rect.bottom + needed > window.innerHeight && rect.top > needed);
+        const bounds = clippingBounds(input);
+        setFlipUp(rect.bottom + needed > bounds.bottom && rect.top - needed > bounds.top);
     }, [isOpen]);
 
     return (
         <div ref={rootRef} className="relative flex items-center gap-3">
-            <span id={labelId} className="w-[68px] shrink-0 text-xs font-medium text-[var(--text-secondary)]">
-                Size
-            </span>
+            {!labelledBy && (
+                <span id={labelId} className="w-[68px] shrink-0 text-xs font-medium text-[var(--text-secondary)]">
+                    {label}
+                </span>
+            )}
 
             <div
                 className={`flex-1 min-w-0 h-9 flex items-center rounded-[var(--radius-md)] bg-[var(--bg-input)] border transition-colors ${invalid
@@ -224,7 +254,11 @@ export function FontSizeField({ value, onChange }: FontSizeFieldProps) {
                     // failure is what you need to hear, not the rule you already
                     // broke. The hint is always attached so the allowed range is
                     // discoverable up front rather than only after tripping it.
-                    aria-describedby={invalid ? `${baseId}-error ${baseId}-hint` : `${baseId}-hint`}
+                    aria-describedby={[
+                        invalid ? `${baseId}-error` : null,
+                        `${baseId}-hint`,
+                        describedBy ?? null,
+                    ].filter(Boolean).join(" ")}
                     onChange={(e) => {
                         setDraft(e.target.value);
                         // Typing takes over from the preset list. Leaving it open
@@ -270,7 +304,7 @@ export function FontSizeField({ value, onChange }: FontSizeFieldProps) {
             <span
                 id={`${baseId}-error`}
                 role="alert"
-                className="absolute left-[80px] top-full mt-1 text-[11px] text-[var(--danger-text)] empty:hidden"
+                className={`absolute ${popupInset} top-full mt-1 text-[11px] text-[var(--danger-text)] empty:hidden`}
             >
                 {!invalid ? "" : outOfRange
                     ? `Size must be between ${MIN_FONT_SIZE} and ${MAX_FONT_SIZE}`
@@ -283,7 +317,7 @@ export function FontSizeField({ value, onChange }: FontSizeFieldProps) {
                     id={listboxId}
                     role="listbox"
                     aria-labelledby={labelId}
-                    className={`absolute left-[80px] right-0 z-[80] max-h-[min(240px,40vh)] overflow-y-auto py-1 bg-[var(--bg-secondary)] border border-[var(--border)] rounded-[var(--radius-md)] shadow-2xl ${flipUp ? "bottom-[calc(100%+4px)]" : "top-[calc(100%+4px)]"
+                    className={`absolute ${popupInset} right-0 z-[80] max-h-[min(240px,40vh)] overflow-y-auto py-1 bg-[var(--bg-secondary)] border border-[var(--border)] rounded-[var(--radius-md)] shadow-2xl ${flipUp ? "bottom-[calc(100%+4px)]" : "top-[calc(100%+4px)]"
                         }`}
                 >
                     {FONT_SIZE_PRESETS.map((size, i) => (

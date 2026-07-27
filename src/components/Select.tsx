@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect, useLayoutEffect, useId, useCallback, type ReactNode, type CSSProperties } from "react";
+import { clippingBounds } from "../utils/popover";
 
 export interface SelectOption<T extends string> {
     value: T;
@@ -11,9 +12,31 @@ export interface SelectOption<T extends string> {
     hint?: string;
 }
 
-interface SelectProps<T extends string> {
-    /** Visible label; also names the listbox for screen readers. */
-    label: string;
+/**
+ * How the control gets its accessible name: it renders its own label, OR an
+ * element outside it already does and hands over the id. Never both.
+ *
+ * The settings modal lays its rows out as label-and-description on the left,
+ * control on the right, so the row heading is the label and a built-in one would
+ * be a second copy of the same word. `labelledBy` suppresses the built-in span
+ * and points the combobox and its listbox at the row heading instead: one label
+ * node referenced twice, rather than a visible label plus an sr-only duplicate,
+ * which browse mode reads out as "Font" followed by "Font, Merriweather".
+ *
+ * The union is what makes that safe. `label` was previously required alongside
+ * `labelledBy` and then never read, so the two could say different things and
+ * nothing in the UI, a screenshot or a test could ever show it: exactly the
+ * "Font size" over a field calling itself "Size" defect this arrangement exists
+ * to fix, moved one layer up and made invisible. Passing both is now a type
+ * error, so there is only ever one string.
+ */
+type SelectNaming =
+    | { label: string; labelledBy?: undefined }
+    | { label?: undefined; labelledBy: string };
+
+type SelectProps<T extends string> = SelectNaming & {
+    /** Id of descriptive text for the control (a settings row's help line). */
+    describedBy?: string;
     value: T;
     options: readonly SelectOption<T>[];
     onChange: (value: T) => void;
@@ -29,7 +52,7 @@ interface SelectProps<T extends string> {
     previewOnActive?: boolean;
     /** Apply a value transiently. Must NOT persist it — only `onChange` does. */
     onPreview?: (value: T) => void;
-}
+};
 
 /** Type-ahead buffer resets after this long without a keystroke. */
 const TYPEAHEAD_RESET_MS = 500;
@@ -47,7 +70,7 @@ const TYPEAHEAD_RESET_MS = 500;
  * into that outer ring and the two keyboard models would fight. Keeping DOM
  * focus on the trigger at all times sidesteps it entirely.
  */
-export function Select<T extends string>({ label, value, options, onChange, previewOnActive, onPreview }: SelectProps<T>) {
+export function Select<T extends string>({ label, labelledBy, describedBy, value, options, onChange, previewOnActive, onPreview }: SelectProps<T>) {
     const [isOpen, setIsOpen] = useState(false);
     const [activeIndex, setActiveIndex] = useState(0);
     const [flipUp, setFlipUp] = useState(false);
@@ -66,10 +89,15 @@ export function Select<T extends string>({ label, value, options, onChange, prev
     const pressScrollRef = useRef<number | null>(null);
 
     const baseId = useId();
-    const labelId = `${baseId}-label`;
+    const labelId = labelledBy ?? `${baseId}-label`;
     const valueId = `${baseId}-value`;
     const listboxId = `${baseId}-listbox`;
     const optionId = (i: number) => `${baseId}-opt-${i}`;
+
+    // The popup spans the CONTROL, not the whole row, so it has to clear the
+    // built-in label. With an external label there is no label to clear, and a
+    // hard-coded 80px inset would push the list off the right of a narrow slot.
+    const popupInset = labelledBy ? "left-0" : "left-[80px]";
 
     // The option the user actually COMMITTED to. With previewOnActive, `value`
     // tracks the option they are merely arrowing over — driving aria-selected
@@ -266,6 +294,11 @@ export function Select<T extends string>({ label, value, options, onChange, prev
 
     // Open upward when there isn't room below (the gear panel sits near the top
     // of the window, but the modal's Appearance section can sit near the bottom).
+    //
+    // Measured against the CLIPPING ancestor, not the window: inside the settings
+    // modal's scrolling pane the two are ~150px apart, and the window's figure is
+    // the optimistic one, so the list opened downward and got cut off by the pane.
+    // See utils/popover.ts.
     useLayoutEffect(() => {
         if (!isOpen) return;
         const trigger = triggerRef.current;
@@ -273,7 +306,8 @@ export function Select<T extends string>({ label, value, options, onChange, prev
         if (!trigger || !list) return;
         const rect = trigger.getBoundingClientRect();
         const needed = list.offsetHeight + 8;
-        setFlipUp(rect.bottom + needed > window.innerHeight && rect.top > needed);
+        const bounds = clippingBounds(trigger);
+        setFlipUp(rect.bottom + needed > bounds.bottom && rect.top - needed > bounds.top);
     }, [isOpen]);
 
     // Keep the active option visible while arrowing through a scrolled list.
@@ -296,9 +330,11 @@ export function Select<T extends string>({ label, value, options, onChange, prev
 
     return (
         <div ref={rootRef} className="relative flex items-center gap-3">
-            <span id={labelId} className="w-[68px] shrink-0 text-xs font-medium text-[var(--text-secondary)]">
-                {label}
-            </span>
+            {!labelledBy && (
+                <span id={labelId} className="w-[68px] shrink-0 text-xs font-medium text-[var(--text-secondary)]">
+                    {label}
+                </span>
+            )}
 
             <button
                 ref={triggerRef}
@@ -313,6 +349,7 @@ export function Select<T extends string>({ label, value, options, onChange, prev
                 // name-from-content — so naming it by the label alone made it
                 // announce as a bare "Theme", never saying which theme.
                 aria-labelledby={`${labelId} ${valueId}`}
+                aria-describedby={describedBy}
                 onClick={() => (isOpen ? cancel() : open(selectedIndex))}
                 // Focus never leaves the trigger (options are addressed with
                 // aria-activedescendant), so it handles the keys for both states.
@@ -347,7 +384,7 @@ export function Select<T extends string>({ label, value, options, onChange, prev
                         pressScrollRef.current = e.button === 0 ? (listRef.current?.scrollTop ?? 0) : null;
                     }}
                     // z-[80] clears the settings panel (z-[70]) it opens inside of.
-                    className={`absolute left-[80px] right-0 z-[80] max-h-[min(240px,40vh)] overflow-y-auto py-1 bg-[var(--bg-secondary)] border border-[var(--border)] rounded-[var(--radius-md)] shadow-2xl ${flipUp ? "bottom-[calc(100%+4px)]" : "top-[calc(100%+4px)]"
+                    className={`absolute ${popupInset} right-0 z-[80] max-h-[min(240px,40vh)] overflow-y-auto py-1 bg-[var(--bg-secondary)] border border-[var(--border)] rounded-[var(--radius-md)] shadow-2xl ${flipUp ? "bottom-[calc(100%+4px)]" : "top-[calc(100%+4px)]"
                         }`}
                 >
                     {options.map((option, i) => {

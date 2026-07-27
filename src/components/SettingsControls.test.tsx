@@ -214,6 +214,49 @@ describe("Select", () => {
         expect(onChange).not.toHaveBeenCalled();
         expect(screen.getByRole("listbox")).toBeInTheDocument();  // and stays open
     });
+
+    // The settings modal lays rows out as label-on-the-left, control-on-the-right,
+    // so the control has to borrow the row's heading instead of rendering a second
+    // copy of the same word next to it.
+    it("borrows an external label instead of rendering its own", () => {
+        render(
+            <div>
+                <span id="row-label">Reader width</span>
+                <Select labelledBy="row-label" value="apple" options={OPTIONS} onChange={vi.fn()} />
+            </div>,
+        );
+
+        expect(screen.getByRole("combobox")).toHaveAccessibleName(/Reader width.*Apple/s);
+        // Exactly one node says "Reader width". An sr-only duplicate would make
+        // browse mode read the label, then the combobox announce it again.
+        expect(screen.getAllByText("Reader width")).toHaveLength(1);
+    });
+
+    it("carries the row's description onto the control", () => {
+        render(
+            <div>
+                <span id="row-label">Font</span>
+                <span id="row-desc">Body font for the reader and the editor.</span>
+                <Select labelledBy="row-label" describedBy="row-desc" value="apple" options={OPTIONS} onChange={vi.fn()} />
+            </div>,
+        );
+
+        expect(screen.getByRole("combobox")).toHaveAccessibleDescription(
+            "Body font for the reader and the editor.",
+        );
+    });
+
+    it("still names the listbox when the label lives outside", () => {
+        render(
+            <div>
+                <span id="row-label">Font</span>
+                <Select labelledBy="row-label" value="apple" options={OPTIONS} onChange={vi.fn()} />
+            </div>,
+        );
+
+        fireEvent.click(screen.getByRole("combobox"));
+        expect(screen.getByRole("listbox")).toHaveAccessibleName("Font");
+    });
 });
 
 describe("FontSizeField", () => {
@@ -312,6 +355,45 @@ describe("FontSizeField", () => {
         expect(onChange).not.toHaveBeenCalled();
         fireEvent.keyDown(input, { key: "Enter" });
         expect(onChange).toHaveBeenCalledWith(24);
+    });
+
+    // The gear panel has a 68px label column and calls this "Size"; the settings
+    // modal has room for the setting's real name. They used to disagree, with an
+    // <h3>Font size</h3> stacked over a field that named itself "Size" — two
+    // different names for one control.
+    it("takes the name its surface calls it", () => {
+        render(<FontSizeField value={16} onChange={vi.fn()} label="Font size" />);
+        expect(screen.getByRole("combobox")).toHaveAccessibleName("Font size");
+    });
+
+    it("borrows an external label instead of rendering its own", () => {
+        render(
+            <div>
+                <span id="row-label">Font size</span>
+                <FontSizeField value={16} onChange={vi.fn()} labelledBy="row-label" />
+            </div>,
+        );
+
+        expect(screen.getByRole("combobox")).toHaveAccessibleName("Font size");
+        expect(screen.getAllByText("Font size")).toHaveLength(1);
+    });
+
+    // Appending, not replacing: the allowed range is the field's own description
+    // and the row's help line is an addition to it. Replacing would silently drop
+    // the one thing that tells you what a valid size is before you get it wrong.
+    it("keeps its own hint when a row description is attached", () => {
+        render(
+            <div>
+                <span id="row-desc">Headings, line height and the editor scale with it.</span>
+                <FontSizeField value={16} onChange={vi.fn()} describedBy="row-desc" />
+            </div>,
+        );
+
+        const description = screen.getByRole("combobox").getAttribute("aria-describedby") ?? "";
+        expect(description).toContain("row-desc");
+        expect(screen.getByRole("combobox")).toHaveAccessibleDescription(
+            new RegExp(`between ${MIN_FONT_SIZE} and ${MAX_FONT_SIZE}.*Headings`, "s"),
+        );
     });
 });
 

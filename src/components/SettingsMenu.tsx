@@ -6,39 +6,14 @@ import { useTheme } from '../context/ThemeContext';
 import { useDropdownKeyboard } from '../hooks/useDropdownKeyboard';
 import { Select, ThemeSwatch, type SelectOption } from './Select';
 import { FontSizeField } from './FontSizeField';
-import { THEMES, FONTS, fontStack, isBundledFont } from '../utils/appearanceOptions';
-import type { Theme, FontFamily } from '../context/ThemeContext';
+import { THEMES, fontOptionsFor } from '../utils/appearanceOptions';
+import type { Theme } from '../context/ThemeContext';
 
 const themeOptions: SelectOption<Theme>[] = THEMES.map((t) => ({
     value: t.id,
     label: t.name,
     adornment: <ThemeSwatch colors={t.colors} />,
 }));
-
-// Each font previews in its own face — the reason this is a custom listbox and
-// not a native <select> (WKWebView ignores font-family on <option>).
-const fontOptions: SelectOption<FontFamily>[] = FONTS.map((f) => ({
-    value: f.id,
-    label: f.name,
-    hint: f.kind,
-    style: { fontFamily: f.stack },
-}));
-
-/**
- * The bundled fonts, plus the user's own if they have set one.
- *
- * `appearance.font` can name any font installed on the machine, so the value need
- * not be in the list. Without this the dropdown would match nothing and render an
- * empty box, which reads as a bug: the setting IS applied, the picker just cannot
- * name it. Appending it keeps the current font visible and selectable.
- */
-function fontOptionsFor(font: FontFamily): SelectOption<FontFamily>[] {
-    if (isBundledFont(font)) return fontOptions;
-    return [
-        ...fontOptions,
-        { value: font, label: font, hint: "Custom", style: { fontFamily: fontStack(font) } },
-    ];
-}
 
 /**
  * The quick-settings panel behind the titlebar gear: theme, font and size — the
