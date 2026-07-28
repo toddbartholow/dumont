@@ -37,6 +37,20 @@ divider is the upstream project's changelog, retained for provenance.
   active theme with a ring and nothing else, so assistive technology heard a row
   of identically named buttons with no indication of which one was on.
 
+- **The font size field's error message is announced again.** "Size must be
+  between 11 and 32" was hidden with `display: none` until it had something to
+  say, which takes it out of the accessibility tree entirely, so the live region
+  meant to speak it had nothing to announce. It is the only feedback for a bad
+  size.
+
+- **The keyboard focus ring is visible on every theme.** It was drawn in the
+  accent color, and because the ring sits just outside the element it lands on
+  the input background, where VS 2017 Dark's blue is 2.79:1 against the 3:1 an
+  indicator needs. It now uses the token that exists for keyboard cursors, which
+  is between 5.5:1 and 19.8:1 there across all ten themes, and is the same color
+  on four of them. The dashed outline shown when you drag a file onto the welcome
+  screen had the same problem and the same fix.
+
 - **Each Appearance setting is announced by one name instead of two.** Reader
   width was labelled twice over, and the font size control called itself "Size"
   under a heading that said "Font size". Each row now carries a single label that

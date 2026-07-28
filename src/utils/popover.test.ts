@@ -20,7 +20,8 @@ function mount(html: string) {
 
 describe("clippingBounds", () => {
     it("falls back to the viewport when nothing up the chain clips", () => {
-        // The gear panel: it hangs off the titlebar with no scrolling ancestor.
+        // Not a shape the app actually has: App's root is h-screen overflow-hidden,
+        // so even the gear panel finds a clipper. This pins the fallback itself.
         mount(`<div id="panel"><button id="trigger"></button></div>`);
 
         expect(clippingBounds(document.getElementById("trigger")!)).toEqual({

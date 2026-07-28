@@ -13,8 +13,11 @@
  * opens downward, and has its list cut off by the pane it lives in. The reader
  * width control at the foot of the Appearance pane was the one that hit it.
  *
- * Falls back to the viewport when nothing up the chain clips, which is the case
- * for the gear panel: it hangs off the titlebar with no scrolling ancestor.
+ * Falls back to the viewport when nothing up the chain clips. Nothing in this app
+ * actually takes that branch: the gear panel looks like it should, hanging off the
+ * titlebar with no scroller of its own, but App's root is `h-screen
+ * overflow-hidden` and that clips. It lands on the same numbers either way, since
+ * `h-screen` is the viewport and the result is clamped to it regardless.
  */
 export interface ClipBounds {
     readonly top: number;

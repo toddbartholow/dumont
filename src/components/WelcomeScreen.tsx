@@ -138,7 +138,7 @@ export function WelcomeScreen({ onRecentsChanged, onOpenFile, onNewFile, onOpenS
             // can be taller than the viewport, which causes flexbox to push
             // the top edge (the logo) above the scrollable area — invisible
             // unless the user scrolls up.
-            className={`flex-1 flex flex-col items-center justify-start py-10 px-6 no-select overflow-y-auto transition-colors ${isDragging ? "bg-[var(--bg-hover)] outline outline-2 outline-dashed outline-[var(--accent)] -outline-offset-8" : ""}`}
+            className={`flex-1 flex flex-col items-center justify-start py-10 px-6 no-select overflow-y-auto transition-colors ${isDragging ? "bg-[var(--bg-hover)] outline outline-2 outline-dashed outline-[var(--focus-ring)] -outline-offset-8" : ""}`}
             aria-dropeffect="copy"
         >
             <div className="flex flex-col items-center gap-8 max-w-md w-full text-center animate-fade-in-up">

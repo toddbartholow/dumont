@@ -178,7 +178,16 @@ body {
 /* ===== Accessibility ===== */
 
 /* Visible keyboard focus ring on every interactive element. Only fires on
-   keyboard focus (focus-visible), so mouse clicks don't show the ring. */
+   keyboard focus (focus-visible), so mouse clicks don't show the ring.
+
+   Drawn in --focus-ring, not --accent. A focus outline is a keyboard cursor,
+   which is the job --focus-ring exists for, and --accent is a FILL token held
+   only to 3:1 against the page and the panel. The difference is not academic:
+   with outline-offset, the ring around a text field is painted on --bg-input,
+   where vs2017's #007acc is 2.79:1, under the 3:1 an indicator needs. This is
+   the same move seven components already made for --bg-hover; the global rule
+   was the one that got missed, because no contrast pair covered the surface it
+   lands on. --focus-ring is 5.52 to 19.80 there across the ten built-ins. */
 *:focus {
   outline: none;
 }
@@ -192,7 +201,7 @@ select:focus-visible,
 [role="menuitem"]:focus-visible,
 [role="option"]:focus-visible,
 [tabindex]:not([tabindex="-1"]):focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--focus-ring);
   outline-offset: 2px;
   border-radius: var(--radius-sm);
 }

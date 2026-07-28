@@ -300,11 +300,19 @@ export function FontSizeField({ value, onChange, label = "Size", labelledBy, des
                 the message was otherwise never spoken. The container is mounted
                 unconditionally and only its TEXT changes: WebKit (the macOS
                 build, and VoiceOver with it) is unreliable at announcing a live
-                region that appears in the same tick as its content. */}
+                region that appears in the same tick as its content.
+
+                And NO `empty:hidden`, which is `display: none` and undoes all of
+                that at the CSS layer: a hidden subtree is not in the accessibility
+                tree at all, so the region really did appear in the same tick as
+                its content, and the message a screen reader user gets for a bad
+                size is the only feedback they get. It bought nothing to begin
+                with, since an empty absolutely positioned span has no size, no
+                background and nothing to hit. */}
             <span
                 id={`${baseId}-error`}
                 role="alert"
-                className={`absolute ${popupInset} top-full mt-1 text-[11px] text-[var(--danger-text)] empty:hidden`}
+                className={`absolute ${popupInset} top-full mt-1 text-[11px] text-[var(--danger-text)]`}
             >
                 {!invalid ? "" : outOfRange
                     ? `Size must be between ${MIN_FONT_SIZE} and ${MAX_FONT_SIZE}`

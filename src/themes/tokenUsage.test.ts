@@ -51,9 +51,14 @@ function enclosingClassList(line: string, at: number): string {
     return line.slice(start, end);
 }
 
-/** A class list that paints --bg-hover AND an --accent foreground on it. */
+/** A class list that paints --bg-hover AND an --accent foreground on it.
+ *
+ *  `outline` is in the alternation because a NEGATIVE outline-offset draws the
+ *  ring inside the element, on the element's own background. WelcomeScreen's
+ *  drag-over state did exactly that (`-outline-offset-8` over --bg-hover) and
+ *  slipped past a pattern that only knew about text, ring and border. */
 const DRAWS_ACCENT_ON_HOVER =
-    /bg-\[var\(--bg-hover\)\][^"'`]*(?:text|ring|border)-\[var\(--accent\)\]|(?:text|ring|border)-\[var\(--accent\)\][^"'`]*bg-\[var\(--bg-hover\)\]/;
+    /bg-\[var\(--bg-hover\)\][^"'`]*(?:text|ring|border|outline)-\[var\(--accent\)\]|(?:text|ring|border|outline)-\[var\(--accent\)\][^"'`]*bg-\[var\(--bg-hover\)\]/;
 
 describe("color tokens are used on surfaces they contrast with", () => {
     it("never draws --accent on --bg-hover (use --focus-ring)", () => {
@@ -68,6 +73,33 @@ describe("color tokens are used on surfaces they contrast with", () => {
         expect(
             offenders,
             "--accent is only 2.37:1 on --bg-hover in vs2017. Use --focus-ring for anything drawn on a hover surface.",
+        ).toEqual([]);
+    });
+
+    /**
+     * The focus outline may not be drawn in --accent.
+     *
+     * Same rule as the one above, on the surface the contrast table could not see.
+     * `outline-offset` pushes the ring off the element and onto whatever it sits
+     * on, and for the settings text fields that is --bg-input, where vs2017's
+     * #007acc is 2.79:1 against a 3:1 floor. No pair in contrast.ts covered
+     * --accent there, so nothing caught it; this reads the CSS instead, which is
+     * where the rule actually lives.
+     */
+    it("never draws the focus outline in --accent (use --focus-ring)", () => {
+        const css = readFileSync("src/index.css", "utf8");
+        // `outline-color` as well as the shorthand, and not anchored to the start
+        // of a line: a single-line rule is just as much a violation as a formatted
+        // block, and an anchored pattern would have said the file was clean.
+        const offenders = css
+            .split("\n")
+            .map((line, i) => ({ line, at: i + 1 }))
+            .filter(({ line }) => /\boutline(-color)?:\s*[^;]*var\(--accent\)/.test(line))
+            .map(({ at }) => `src/index.css:${at}`);
+
+        expect(
+            offenders,
+            "--accent is 2.79:1 on --bg-input in vs2017, and outline-offset puts the ring on that surface. Use --focus-ring.",
         ).toEqual([]);
     });
 
