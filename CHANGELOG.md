@@ -11,6 +11,8 @@ divider is the upstream project's changelog, retained for provenance.
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-07-28
+
 ### Changed
 
 - **Every Appearance setting now fits on one screen.** The pane was about twice as
