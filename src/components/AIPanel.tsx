@@ -210,7 +210,7 @@ export function AIPanel({ isOpen, onClose, note, fileName, selectionText, aiConf
                         <p className="text-xs text-[var(--text-secondary)] leading-relaxed">
                             {mode === "agent"
                                 ? "I'll propose edits you can review and accept."
-                                : "Summaries, questions, suggestions: anything."}
+                                : "Summaries, questions, suggestions, anything."}
                         </p>
                         {!hasKey && (
                             <p className="mt-1 text-[11px] text-[var(--text-secondary)] leading-relaxed">

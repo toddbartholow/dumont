@@ -10,7 +10,7 @@ import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { ThemeProvider, useTheme } from "./context/ThemeContext";
 import { TitleBar } from "./components/TitleBar";
 import { WelcomeScreen } from "./components/WelcomeScreen";
-import { CodeEditor } from "./components/CodeEditor";
+import { CodeEditor, type FindActionRunner } from "./components/CodeEditor";
 import { StatusBar } from "./components/StatusBar";
 import { ModeToggle, type ViewMode } from "./components/ModeToggle";
 import { ToastStack } from "./components/Toast";
@@ -290,11 +290,11 @@ function AppContent() {
   // CodeEditor: a repeat Mod+F has to refocus a bar that is already open, and
   // "open" is not a state change when it is already true.
   const [previewFindFocusSignal, setPreviewFindFocusSignal] = useState(0);
-  // The editor's own find bar lives inside CodeEditor, which registers a toggle
+  // The editor's own find bar lives inside CodeEditor, which registers an action
   // here on mount. Held in a ref, not state: storing the callback in state would
   // re-render App on every editor mount, and nothing renders off its value.
-  const editorFindActionRef = useRef<((action: "toggle" | "open") => void) | null>(null);
-  const registerFindAction = useCallback((run: ((action: "toggle" | "open") => void) | null) => {
+  const editorFindActionRef = useRef<FindActionRunner | null>(null);
+  const registerFindAction = useCallback((run: FindActionRunner | null) => {
     editorFindActionRef.current = run;
   }, []);
   // Whether the editor's bar is open. This one IS state, unlike the callback
@@ -1650,6 +1650,10 @@ function AppContent() {
   // editor's bar (the reader bar is deliberately reader-mode only, see the reset
   // effect above) and the two affordances never disagree about which bar is
   // "the" find bar for the current view.
+  // Any dialog up. Mod+F must not open a find bar behind one; see the field's
+  // note in useGlobalShortcuts for what that looks like when it goes wrong.
+  const anyModalOpen = Object.values(modals.open).some(Boolean);
+
   const handleFindShortcut = useCallback(() => {
     if (mode === "preview") {
       setPreviewFindOpen(true);
@@ -1681,7 +1685,12 @@ function AppContent() {
     nextTab: () => cycleTab(1),
     reopenClosedTab,
     gotoTab: gotoTabByIndex,
-    hasFile, content, mode,
+    hasFile, content,
+    // `mode` used to be passed here and is deliberately gone: the hook stopped
+    // routing find on it when Mod+F started covering every view, and a field
+    // nothing reads invites the next reader to look in the wrong file. The view
+    // routing lives in handleFindShortcut above.
+    modalOpen: anyModalOpen,
   });
 
   // Get export HTML from the visible preview on demand (avoids duplicate rendering)

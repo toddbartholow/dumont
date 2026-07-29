@@ -42,11 +42,11 @@ function press(init: KeyboardEventInit) {
     return ev;
 }
 
-// Stands in for a focused CodeMirror: dispatch from a node BELOW window whose
-// own listener preventDefaults, so the event reaches the hook's window listener
-// in the bubble phase already claimed. Dispatching straight at window cannot
-// reproduce that ordering, which is the whole thing the defaultPrevented check
-// depends on.
+// Reproduces the one property the hook actually reads: defaultPrevented already
+// set by the time the event bubbles to window. Dispatching straight at window
+// cannot produce that ordering. It does NOT simulate focus, which the hook never
+// reads, and it does not prove CodeMirror itself preventDefaults Mod-f, so a
+// CodeMirror change there would keep these green.
 function pressFromEditor(init: KeyboardEventInit) {
     const el = document.createElement("div");
     document.body.appendChild(el);
@@ -129,26 +129,12 @@ describe("useGlobalShortcuts gating", () => {
         expect(h.handleSaveFile).not.toHaveBeenCalled();
     });
 
-    it("Ctrl+F opens find in reader mode", () => {
-        const h = makeHandlers({ mode: "preview", openFind: vi.fn() });
-        render(<Harness handlers={h} />);
-        press({ key: "f", ctrlKey: true });
-        expect(h.openFind).toHaveBeenCalledTimes(1);
-    });
-
-    // Code and split view too, NOT just the reader. When no editor has focus
-    // nothing else claims Mod+F, and this used to fall through to nothing: split
-    // view with the caret in the preview pane, or code mode after a dialog closed
-    // and left focus on <body>.
-    it("Ctrl+F opens find in code mode when no editor claimed the key", () => {
-        const h = makeHandlers({ mode: "code", openFind: vi.fn() });
-        render(<Harness handlers={h} />);
-        press({ key: "f", ctrlKey: true });
-        expect(h.openFind).toHaveBeenCalledTimes(1);
-    });
-
-    it("Ctrl+F opens find in split mode when no editor claimed the key", () => {
-        const h = makeHandlers({ mode: "split", openFind: vi.fn() });
+    // One test, not one per view mode. The hook no longer knows the view mode at
+    // all: it fires whenever no editor claimed the key, and App decides which bar
+    // that means. Three copies differing only in a `mode` field the hook ignored
+    // read as covering three paths while exercising one.
+    it("Ctrl+F opens find when no editor claimed the key", () => {
+        const h = makeHandlers({ openFind: vi.fn() });
         render(<Harness handlers={h} />);
         press({ key: "f", ctrlKey: true });
         expect(h.openFind).toHaveBeenCalledTimes(1);
@@ -159,7 +145,7 @@ describe("useGlobalShortcuts gating", () => {
     // must read that flag and keep out. Without the check, every Mod+F in a
     // focused editor would fire both paths.
     it("Ctrl+F keeps out when a focused editor already claimed the key", () => {
-        const h = makeHandlers({ mode: "code", openFind: vi.fn() });
+        const h = makeHandlers({ openFind: vi.fn() });
         render(<Harness handlers={h} />);
         pressFromEditor({ key: "f", ctrlKey: true });
         expect(h.openFind).not.toHaveBeenCalled();
@@ -169,7 +155,7 @@ describe("useGlobalShortcuts gating", () => {
     // native menu, so nothing else covers Cmd here: before these, ⌘F and
     // ⌘⇧F were dead on macOS while the cheatsheet advertised them.
     it("Cmd+F opens find in reader mode, and claims the key", () => {
-        const h = makeHandlers({ mode: "preview", openFind: vi.fn() });
+        const h = makeHandlers({ openFind: vi.fn() });
         render(<Harness handlers={h} />);
         const ev = press({ key: "f", metaKey: true });
         expect(h.openFind).toHaveBeenCalledTimes(1);
@@ -177,15 +163,27 @@ describe("useGlobalShortcuts gating", () => {
     });
 
     it("Cmd+F keeps out when a focused editor already claimed the key", () => {
-        const h = makeHandlers({ mode: "code", openFind: vi.fn() });
+        const h = makeHandlers({ openFind: vi.fn() });
         render(<Harness handlers={h} />);
         pressFromEditor({ key: "f", metaKey: true });
         expect(h.openFind).not.toHaveBeenCalled();
     });
 
+    // A dialog is up, so the find bar would open at z-40 underneath it and pull
+    // focus into a field the user cannot see. Nothing in the app preventDefaults
+    // an F chord, so defaultPrevented does not cover this and a separate gate has
+    // to. The key is left unclaimed too, not just unhandled.
+    it("Ctrl+F does nothing while a dialog is open", () => {
+        const h = makeHandlers({ modalOpen: true, openFind: vi.fn() });
+        render(<Harness handlers={h} />);
+        const ev = press({ key: "f", ctrlKey: true });
+        expect(h.openFind).not.toHaveBeenCalled();
+        expect(ev.defaultPrevented).toBe(false);
+    });
+
     // Opt+Cmd+F is the editor's replace. The find handler must not eat it.
     it("Opt+Cmd+F does not open find", () => {
-        const h = makeHandlers({ mode: "preview", openFind: vi.fn() });
+        const h = makeHandlers({ openFind: vi.fn() });
         render(<Harness handlers={h} />);
         press({ key: "f", metaKey: true, altKey: true });
         expect(h.openFind).not.toHaveBeenCalled();
@@ -278,7 +276,7 @@ describe("useGlobalShortcuts gating", () => {
     // (The early return in the cross-file branch is belt and braces, not what
     // makes this hold, so deleting that return would leave this test green.)
     it("Cmd+Shift+F does not also open the find bar", () => {
-        const h = makeHandlers({ mode: "preview", openSearch: vi.fn(), openFind: vi.fn() });
+        const h = makeHandlers({ openSearch: vi.fn(), openFind: vi.fn() });
         render(<Harness handlers={h} />);
         press({ key: "f", metaKey: true, shiftKey: true });
         expect(h.openFind).not.toHaveBeenCalled();

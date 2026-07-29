@@ -88,6 +88,7 @@ describe("a closed FindReplaceBar", () => {
         onClose: vi.fn(),
         onReplace: vi.fn(),
         onJumpTo: vi.fn(),
+        focusSignal: 0,
         ...over,
     });
 

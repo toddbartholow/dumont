@@ -36,9 +36,16 @@ export interface ShortcutHandlers {
     gotoTab?: (index: number) => void;
     hasFile: boolean;
     content: string;
-    /** Current view mode — Ctrl+F routes to the preview find bar in reader
-     *  mode (the CodeMirror keymap owns find when the editor has focus). */
-    mode?: "preview" | "code" | "split";
+    /**
+     * True while any dialog is up. Only Mod+F reads it, and only because find is
+     * the shortcut whose failure mode is actively harmful: the find bar renders
+     * at z-40, every dialog overlays it at z-100 or above, and the bar takes
+     * focus when it opens. Without this the user types into an input they cannot
+     * see, behind the dialog they are looking at, and Escape closes the find bar
+     * instead of the dialog. The other shortcuts here also fire under a dialog,
+     * which is worth revisiting, but they do not steal focus to do it.
+     */
+    modalOpen?: boolean;
 }
 
 /**
@@ -169,19 +176,29 @@ export function useGlobalShortcuts(handlers: ShortcutHandlers) {
             //
             // The defaultPrevented check is what lets this cover code and split
             // view as well as the reader. CodeMirror's own Mod-f binding lives on
-            // the editor's DOM and preventDefaults when it fires; this listener is
-            // on window in the BUBBLE phase, so by the time it runs the editor has
-            // already had its say. Seeing the flag set means the focused editor
-            // handled it and this must keep out; seeing it clear means no editor
-            // had focus, which is exactly the case that used to fall through to
-            // nothing: split view with the caret in the preview pane, or code mode
-            // after a dialog closed and left focus on <body>.
+            // the editor's DOM and preventDefaults when it fires (because its run
+            // returns true); this listener is on window in the BUBBLE phase, so by
+            // the time it runs the editor has already had its say. Flag set means
+            // a focused editor handled it; flag clear means none did, which is the
+            // case that used to fall through to nothing: split view with the caret
+            // in the preview pane, or code mode with focus on <body>.
             //
-            // Do NOT switch this listener to capture phase without revisiting
-            // this. In capture, window runs FIRST, the flag is always clear, and
-            // every Mod+F in a focused editor fires both paths.
+            // It is belt and braces rather than load-bearing, and that is worth
+            // knowing before anyone is afraid to touch it. If both paths ever ran,
+            // the keymap and the "open" action do the same idempotent thing, so
+            // the user would see one bar and one focus. Choosing "open" over
+            // "toggle" for the keyboard is what makes that true: a toggle would
+            // have opened and immediately closed.
+            //
+            // Do NOT switch this listener to capture phase. In capture, window
+            // runs FIRST, the flag is always clear, and the editor's own binding
+            // stops being reachable at all.
+            //
+            // modalOpen is a separate gate and NOT redundant: no dialog in this app
+            // preventDefaults an F chord, so without it Mod+F opens the find bar
+            // underneath whatever dialog is up and steals focus into it.
             if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && (e.key === "f" || e.key === "F")) {
-                if (s.hasFile && !e.defaultPrevented && s.openFind) {
+                if (s.hasFile && !s.modalOpen && !e.defaultPrevented && s.openFind) {
                     e.preventDefault();
                     s.openFind();
                 }

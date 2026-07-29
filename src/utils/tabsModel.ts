@@ -126,7 +126,7 @@ function parentSegments(filePath: string | null): string[] {
 /**
  * Display label per tab: just the file name when unique, else the file name plus
  * the shortest trailing folder path that distinguishes it from the other tabs
- * sharing that name — like `README.md — docs`. TABS-09.
+ * sharing that name — like `README.md (docs)`. TABS-09.
  */
 export function computeTabLabels(
   tabs: Array<{ id: string; fileName: string; filePath: string | null }>

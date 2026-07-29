@@ -16,8 +16,9 @@ interface PreviewFindBarProps {
     rootRef: React.RefObject<HTMLElement | null>;
     onClose: () => void;
     /** Bump to refocus and select the query on an already-open bar. The VALUE is
-     *  meaningless; only that it changed matters. */
-    focusSignal?: number;
+     *  meaningless; only that it changed matters. Required for the same reason as
+     *  FindReplaceBar's: forgetting it fails silently. */
+    focusSignal: number;
 }
 
 const MAX_MATCHES = 5000;
@@ -63,7 +64,7 @@ function clearHighlights() {
     }
 }
 
-export function PreviewFindBar({ rootRef, onClose, focusSignal = 0 }: PreviewFindBarProps) {
+export function PreviewFindBar({ rootRef, onClose, focusSignal }: PreviewFindBarProps) {
     const [query, setQuery] = useState("");
     const [activeIdx, setActiveIdx] = useState(0);
     const [matchCount, setMatchCount] = useState(0);

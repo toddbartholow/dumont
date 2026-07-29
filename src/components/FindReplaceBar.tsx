@@ -13,8 +13,12 @@ interface FindReplaceBarProps {
      *  is currently inside it and therefore needs rehoming. */
     rootRef?: React.Ref<HTMLDivElement>;
     /** Bump to refocus and select the query on an already-open bar. The VALUE is
-     *  meaningless; only that it changed matters. */
-    focusSignal?: number;
+     *  meaningless; only that it changed matters.
+     *
+     *  Required, not optional. Both real call sites pass it, and the only thing
+     *  optionality buys is the ability to forget, which yields a bar that
+     *  silently never refocuses. That failure is invisible; a wrong value is not. */
+    focusSignal: number;
 }
 
 interface MatchResult {
@@ -31,7 +35,7 @@ export function FindReplaceBar({
     onReplace,
     onJumpTo,
     rootRef,
-    focusSignal = 0,
+    focusSignal,
 }: FindReplaceBarProps) {
     const [query, setQuery] = useState("");
     const [replacement, setReplacement] = useState("");
@@ -70,7 +74,9 @@ export function FindReplaceBar({
     // is already true, React sees no change, and the effect above never re-runs.
     // Kept separate from that effect rather than folded into its deps, because
     // reusing it would also re-run setShowReplace and collapse the replace field
-    // under someone who had just opened it.
+    // under someone who had just opened it. The cost of the split is that BOTH
+    // effects focus on the open transition (isOpen is in this one's deps too).
+    // That is idempotent, and dropping the dep would need a lint suppression.
     useEffect(() => {
         if (!isOpen) return;
         inputRef.current?.focus();

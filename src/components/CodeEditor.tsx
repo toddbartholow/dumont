@@ -50,6 +50,17 @@ import { Minimap, MINIMAP_WIDTH } from "./Minimap";
  *  which is where hiding it genuinely helps. */
 const MINIMAP_MIN_PANE_WIDTH = 360;
 
+/**
+ * What a caller wants from the editor's find bar. Exported so App and the tests
+ * share this spelling instead of keeping copies: with strictFunctionTypes a
+ * narrower private copy in a test still typechecks against a wider prop (params
+ * are contravariant), so a third arm added here would compile everywhere and
+ * simply go untested, and an arm removed here would still compile at a call site
+ * passing it. Both are silent.
+ */
+export type FindAction = "toggle" | "open";
+export type FindActionRunner = (action: FindAction) => void;
+
 interface CodeEditorProps {
     content: string;
     onChange: (content: string) => void;
@@ -72,7 +83,7 @@ interface CodeEditorProps {
      *  only visible affordance is dead. A keyboard shortcut must NOT toggle:
      *  Mod+F on an open bar means "take me to the search box", not "close it",
      *  which is what every browser and editor does. */
-    registerFindAction?: (run: ((action: "toggle" | "open") => void) | null) => void;
+    registerFindAction?: (run: FindActionRunner | null) => void;
     /** Fires whenever the find bar opens or closes, by any route. */
     onFindOpenChange?: (open: boolean) => void;
     typewriterMode?: boolean;
@@ -449,7 +460,12 @@ function CodeEditorImpl({
                     return true;
                 }
             },
-            { key: "Mod-f", run: (v) => { setSelStartForFind(v.state.selection.main.from); setFindMode("find"); setFindOpen(true); setFindFocusSignal((n) => n + 1); return true; } },
+            // Through openFindBar, NOT its own copy of the open sequence. The two
+            // used to diverge and collapse the replace row; see openFindBar below.
+            // Returning true is what makes CodeMirror preventDefault, which is in
+            // turn what tells the app's window-level handler an editor claimed
+            // this key. useGlobalShortcuts depends on that; do not return false.
+            { key: "Mod-f", run: () => { openFindBar(); return true; } },
             // Replace. Mod-h is Ctrl+H on Windows and Linux, which is standard there.
             // On macOS Mod-h is Cmd+H, and Cmd+H is Hide: the OS matches a main-menu
             // key equivalent before the key ever reaches the webview, so the editor
@@ -820,11 +836,34 @@ function CodeEditorImpl({
     // announcement. So refocus only when focus is actually inside the bar.
     //
     // findOpen is read through a ref, not the closure: this effect re-runs only
-    // when registerToggleFind changes, so a captured findOpen would be stuck at
+    // when registerFindAction changes, so a captured findOpen would be stuck at
     // whatever it was on mount and the button would only ever open.
     const findOpenRef = useRef(findOpen);
     findOpenRef.current = findOpen;
     const findBarRef = useRef<HTMLDivElement>(null);
+
+    // THE one way to open the find bar, shared by the Mod-f keymap above and the
+    // registered action below, because both are the same user gesture and they
+    // used to disagree. The keymap set findMode("find") unconditionally, so
+    // pressing Mod-f to get back to the search box in a bar that Ctrl+H had
+    // opened in replace mode flipped initialMode and collapsed the replace row
+    // out from under the user, losing whatever was typed in it. Which of the two
+    // paths ran depended only on where focus happened to be.
+    //
+    // Seeding the search origin is likewise for the closed case only: on a repeat
+    // Mod-f the user is returning to a search in progress, and moving the origin
+    // to the current caret would change which match Enter goes to next.
+    //
+    // Stable (refs and setState only), so the once-created keymap can close over it.
+    const openFindBar = useCallback(() => {
+        if (!findOpenRef.current) {
+            setSelStartForFind(viewRef.current?.state.selection.main.from ?? 0);
+            setFindMode("find");
+            setFindOpen(true);
+        }
+        setFindFocusSignal((n) => n + 1);
+    }, []);
+
     useEffect(() => {
         if (!registerFindAction) return;
         registerFindAction((action) => {
@@ -834,19 +873,10 @@ function CodeEditorImpl({
                 if (focusWasInBar) viewRef.current?.focus();
                 return;
             }
-            // Reaching here means "open it". Seed the search origin only when the
-            // bar is actually closed: on a repeat Mod+F the user is coming back to
-            // a search in progress, and resetting the origin to the current caret
-            // would make Enter jump to a different match than the one they left.
-            if (!findOpenRef.current) {
-                setSelStartForFind(viewRef.current?.state.selection.main.from ?? 0);
-                setFindMode("find");
-                setFindOpen(true);
-            }
-            setFindFocusSignal((n) => n + 1);
+            openFindBar();
         });
         return () => registerFindAction(null);
-    }, [registerFindAction]);
+    }, [registerFindAction, openFindBar]);
 
     // Report the bar's open state up so the title-bar button can announce it as
     // a toggle. Covers every route in and out, the keymap and the bar's × as

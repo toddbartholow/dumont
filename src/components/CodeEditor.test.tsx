@@ -10,7 +10,7 @@
 // --selection-bg to win.
 import { describe, it, expect, beforeAll, afterEach, vi } from "vitest";
 import { render, waitFor, cleanup, screen, act } from "@testing-library/react";
-import { CodeEditor } from "./CodeEditor";
+import { CodeEditor, type FindActionRunner } from "./CodeEditor";
 import { TestProviders } from "../test/providers";
 import { installCodeMirrorDomPolyfills } from "../test/codemirrorDom";
 
@@ -81,10 +81,13 @@ describe("registerFindAction", () => {
     // production App's registerFindAction is useCallback-stable, the effect runs
     // once, and the ref is what keeps the single long-lived callback correct.
     // A stable mock reproduces that.
-    type FindAction = (action: "toggle" | "open") => void;
-
+    //
+    // FindActionRunner is imported, not respelled locally. A private copy drifts
+    // silently in both directions under strictFunctionTypes: params are
+    // contravariant, so a narrower local copy still typechecks against a wider
+    // prop, and an arm added or removed in production produces no error here.
     async function mount() {
-        const registerFindAction = vi.fn<(t: FindAction | null) => void>();
+        const registerFindAction = vi.fn<(run: FindActionRunner | null) => void>();
         const onFindOpenChange = vi.fn<(open: boolean) => void>();
         const { container, unmount } = render(
             <TestProviders>
@@ -179,5 +182,47 @@ describe("registerFindAction", () => {
         const { registerFindAction, unmount } = await mount();
         unmount();
         expect(registerFindAction).toHaveBeenLastCalledWith(null);
+    });
+});
+
+// The keymap and the registered action are the SAME user gesture reaching the
+// same bar by different routes, and which one runs depends only on where focus
+// happens to be. They used to disagree: the keymap reset findMode to "find"
+// unconditionally, so pressing Mod-f to get back to the search box in a bar
+// Ctrl+H had opened collapsed the replace row and lost what was typed in it.
+describe("Mod-f keymap", () => {
+    async function mountEditor() {
+        const { container } = render(
+            <TestProviders>
+                <CodeEditor content="hello world" onChange={() => {}} />
+            </TestProviders>,
+        );
+        await waitFor(() => expect(container.querySelector(".cm-content")).toBeTruthy());
+        return container.querySelector(".cm-content") as HTMLElement;
+    }
+
+    // ctrlKey drives Mod- on the non-mac keymap resolution jsdom reports.
+    const chord = (el: HTMLElement, key: string, extra: KeyboardEventInit = {}) =>
+        act(() => {
+            el.dispatchEvent(new KeyboardEvent("keydown", {
+                key, ctrlKey: true, bubbles: true, cancelable: true, ...extra,
+            }));
+        });
+
+    it("opens the find bar", async () => {
+        const content = await mountEditor();
+        chord(content, "f");
+        await waitFor(() => expect(screen.queryByLabelText("Find text")).toBeTruthy());
+    });
+
+    it("does not collapse the replace row when the bar is already open in replace mode", async () => {
+        const content = await mountEditor();
+
+        chord(content, "h");
+        await waitFor(() => expect(screen.queryByLabelText("Replace with")).toBeTruthy());
+
+        chord(content, "f");
+        await waitFor(() => expect(screen.queryByLabelText("Find text")).toBeTruthy());
+        expect(screen.queryByLabelText("Replace with")).toBeTruthy();
     });
 });

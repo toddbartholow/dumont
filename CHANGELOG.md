@@ -61,6 +61,17 @@ divider is the upstream project's changelog, retained for provenance.
   handler was the only thing covering it, and it tested `ctrlKey` alone. Cmd+E
   (toggle reader/editor) is left alone on purpose, because that one IS a menu
   accelerator and widening it would toggle the mode twice.
+- **Ctrl+F opened a find bar behind an open dialog.** With the command palette,
+  settings or cross-file search up, Ctrl+F opened the find bar underneath the
+  dialog's overlay and moved the cursor into a field that could not be seen, so
+  typing went nowhere visible and Escape closed the hidden bar instead of the
+  dialog. Nothing in the app claims an F chord, so the check that keeps Ctrl+F
+  out of the focused editor did not cover this and a separate one was needed.
+- **Ctrl+F threw away an open replace box.** Opening find and replace with
+  Ctrl+H, clicking back into the text, then pressing Ctrl+F to return to the
+  search field collapsed the replace row and discarded whatever had been typed
+  in it. The editor's keymap and the title-bar button reached the same bar by two
+  routes that disagreed, and which one ran depended only on where the cursor was.
 - **The cheatsheet listed only one of the two find bars.** Reader-mode find was
   missing entirely; the single Find row sat under the editor group, so the bar
   that opens in the default view was undocumented.
