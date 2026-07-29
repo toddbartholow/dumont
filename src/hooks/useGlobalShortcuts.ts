@@ -62,11 +62,18 @@ export function useGlobalShortcuts(handlers: ShortcutHandlers) {
                 s.toggleFullscreen();
                 return;
             }
-            // Ctrl+Shift+E - Toggle file explorer (check before Ctrl+E).
+            // Mod+Shift+E - Toggle file explorer (check before Mod+E).
             // Match both cases: with CapsLock on, Shift INVERTS it, so Shift+e reports
             // "e" and a check for "E" alone silently does nothing. Every other shortcut
             // in this file already guards for that; these two were missed.
-            if (e.ctrlKey && e.shiftKey && (e.key === "e" || e.key === "E")) {
+            //
+            // Takes Cmd as well as Ctrl, unlike the Ctrl+E toggle-mode handler below,
+            // and the asymmetry is the point: the File Explorer menu item carries no
+            // accelerator (menu.rs), so nothing else covers Cmd+Shift+E and a
+            // ctrlKey-only test left it dead on macOS. Cmd+E IS a menu accelerator,
+            // so widening that one would toggle the mode twice and look like nothing
+            // happened. !altKey for the AltGr reason noted on the F handlers below.
+            if ((e.ctrlKey || e.metaKey) && e.shiftKey && !e.altKey && (e.key === "e" || e.key === "E")) {
                 e.preventDefault();
                 if (s.hasFile) s.handleToggleFileExplorer();
                 return;
@@ -132,16 +139,34 @@ export function useGlobalShortcuts(handlers: ShortcutHandlers) {
                 if (s.hasFile) s.closeActiveTab?.();
                 return;
             }
-            // Ctrl+Shift+F - search across all files in the folder (checked
-            // before the unshifted Ctrl+F find-in-document below).
-            if (e.ctrlKey && e.shiftKey && (e.key === "f" || e.key === "F")) {
+            // Mod+Shift+F - search across all files in the folder (checked
+            // before the unshifted Mod+F find-in-document below).
+            //
+            // Both F shortcuts accept Cmd as well as Ctrl, and that is the one
+            // thing to preserve here. Find is deliberately absent from the
+            // native menu (see menu.rs), so unlike Cmd+Shift+O / B / H there is
+            // no accelerator quietly covering the mac case: a ctrlKey-only test
+            // left both of these dead on macOS while the cheatsheet advertised
+            // them as ⌘. Do NOT "tidy" this into the ctrlKey-only form the
+            // Ctrl+Shift+B / H handlers above use. Those stay Ctrl-only because
+            // their menu accelerator already fires on macOS and handling the key
+            // here too would run them twice. (Their !e.metaKey guard is not what
+            // does that work; REQUIRING e.ctrlKey is. !e.metaKey only rejects
+            // Ctrl and Cmd held together.)
+            //
+            // !altKey on all three widened handlers: it keeps Opt+Cmd+F for the
+            // editor's replace, and on Windows and Linux it keeps AltGr chords
+            // out, since AltGr reports as ctrlKey+altKey and would otherwise be
+            // swallowed here.
+            if ((e.ctrlKey || e.metaKey) && e.shiftKey && !e.altKey && (e.key === "f" || e.key === "F")) {
                 e.preventDefault();
                 if (s.hasFile) s.openSearch?.();
                 return;
             }
-            // Ctrl+F in reader mode - find in preview. In code/split mode the
+            // Mod+F in reader mode - find in preview. In code/split mode the
             // focused editor's own keymap handles Mod-f, so this never races it.
-            if (e.ctrlKey && !e.shiftKey && (e.key === "f" || e.key === "F")) {
+            // !altKey keeps Opt+Cmd+F, the editor's replace, out of here.
+            if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && (e.key === "f" || e.key === "F")) {
                 if (s.hasFile && s.mode === "preview" && s.openPreviewFind) {
                     e.preventDefault();
                     s.openPreviewFind();

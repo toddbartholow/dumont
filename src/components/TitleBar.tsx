@@ -3,13 +3,33 @@ import type { MouseEvent } from "react";
 import { Window } from "@tauri-apps/api/window";
 import { SettingsMenu } from "./SettingsMenu";
 import { ExportMenu } from "./ExportMenu";
+import type { ViewMode } from "./ModeToggle";
+import { IS_MAC } from "../utils/platform";
 
-interface TitleBarProps {
+export interface TitleBarProps {
     fileName?: string;
     isDirty?: boolean;
     filePath?: string;
     onOpenFile?: () => void;
     onNewFile?: () => void;
+    /** Toggles whichever find bar fits the current view. App decides which. */
+    onFind?: () => void;
+    /**
+     * The current view, which decides which bar the find button names and opens.
+     *
+     * Required, not optional, even though only the find button reads it: with it
+     * optional, `<TitleBar onFind={fn} />` typechecks and `undefined` falls into
+     * the editor branch, so the button silently mislabels itself in reader mode.
+     * Requiring it forbids that state without a discriminated union, and App has
+     * always had a ViewMode to hand.
+     *
+     * Imported rather than re-spelled as a string union: widen ViewMode with a
+     * fourth mode and the ternary below becomes a compile error instead of a
+     * silently mislabeled button.
+     */
+    viewMode: ViewMode;
+    /** Whether that bar is currently open, for the button's pressed state. */
+    findActive?: boolean;
     getExportHtml?: () => string;
     onExportSuccess?: (format: string) => void;
     onExportError?: (format: string) => void;
@@ -19,7 +39,15 @@ interface TitleBarProps {
     onToggleFullscreen?: () => void;
 }
 
-function TitleBarImpl({ fileName, isDirty, filePath, onOpenFile, onNewFile, getExportHtml, onExportSuccess, onExportError, onToggleAI, aiActive, isFullscreen, onToggleFullscreen }: TitleBarProps) {
+function TitleBarImpl({ fileName, isDirty, filePath, onOpenFile, onNewFile, onFind, viewMode, findActive = false, getExportHtml, onExportSuccess, onExportError, onToggleAI, aiActive, isFullscreen, onToggleFullscreen }: TitleBarProps) {
+    // Names the bar the click opens, and nothing more. NOT "Find and replace"
+    // for the editor, though that bar can replace: this button opens it in find
+    // mode and the hint below says ⌘F, while replace is ⌥⌘F / Ctrl+H. Labelling
+    // it for a mode it does not open pointed three signals at two things, and it
+    // collided with the bar's own dialog name, which IS "Find and replace".
+    const findLabel = viewMode === "preview" ? "Find in page" : "Find in editor";
+    const findHint = `${findLabel} (${IS_MAC ? "⌘F" : "Ctrl+F"})`;
+
     const handleMinimize = async () => {
         try {
             const appWindow = Window.getCurrent();
@@ -150,6 +178,21 @@ function TitleBarImpl({ fileName, isDirty, filePath, onOpenFile, onNewFile, getE
                                 <span className="material-symbols-outlined text-[16px]">folder_open</span>
                                 <span className="hidden sm:inline">Open</span>
                             </button>
+                            {onFind && (
+                                <button
+                                    onClick={onFind}
+                                    aria-label={findLabel}
+                                    aria-pressed={findActive}
+                                    className={`flex items-center gap-1 px-2 py-1 rounded-[var(--radius-md)] transition-colors text-xs ${findActive
+                                        ? "bg-[var(--bg-hover)] text-[var(--focus-ring)]"
+                                        : "hover:bg-[var(--bg-hover)] text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
+                                        }`}
+                                    title={findHint}
+                                >
+                                    <span className="material-symbols-outlined text-[16px]" aria-hidden="true">search</span>
+                                    <span className="hidden sm:inline">Find</span>
+                                </button>
+                            )}
                             <ExportMenu
                                 fileName={fileName || 'document.md'}
                                 getExportHtml={getExportHtml}

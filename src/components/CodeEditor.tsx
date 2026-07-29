@@ -61,6 +61,18 @@ interface CodeEditorProps {
     filePath?: string | null;
     onScrollFraction?: (fraction: number) => void;
     registerScroller?: (scroller: Scroller | null) => void;
+    /** Hands App a function that toggles this editor's find bar, so the title-bar
+     *  search button can reach state that lives in here. Same register-a-callback
+     *  shape as registerScroller (called with null on unmount) rather than a
+     *  forwarded ref, to match the one pattern this file already uses.
+     *
+     *  Takes no mode argument. It used to accept "find" | "replace", but the only
+     *  caller passes "find" and the replace paths go through the keymap instead,
+     *  so the second arm was untested speculative generality. Add it back when a
+     *  second caller actually needs it. */
+    registerToggleFind?: (toggle: (() => void) | null) => void;
+    /** Fires whenever the find bar opens or closes, by any route. */
+    onFindOpenChange?: (open: boolean) => void;
     typewriterMode?: boolean;
     showToolbar?: boolean;
     wordWrap?: boolean;
@@ -187,6 +199,8 @@ function CodeEditorImpl({
     filePath,
     onScrollFraction,
     registerScroller,
+    registerToggleFind,
+    onFindOpenChange,
     typewriterMode,
     showToolbar,
     wordWrap = true,
@@ -300,6 +314,7 @@ function CodeEditorImpl({
     const onImagePasteRef = useRef(onImagePaste); onImagePasteRef.current = onImagePaste;
     const onErrorRef = useRef(onError); onErrorRef.current = onError;
     const onNoticeRef = useRef(onNotice); onNoticeRef.current = onNotice;
+    const onFindOpenChangeRef = useRef(onFindOpenChange); onFindOpenChangeRef.current = onFindOpenChange;
     const filePathRef = useRef(filePath); filePathRef.current = filePath;
     // Base names (without .md) of the sibling files, for `[[` autocomplete. Kept
     // in a ref so the once-created completion source always sees the latest list.
@@ -783,6 +798,55 @@ function CodeEditorImpl({
         return () => registerScroller(null);
     }, [registerScroller]);
 
+    // The title-bar search button's route into the find bar. Opening mirrors the
+    // Mod-f keymap at the top of this file, including seeding selStartForFind
+    // from the live selection: the bar searches forward from the caret, so
+    // reading that at open time (not at mount) is what makes the first match
+    // the one after where the user actually is.
+    //
+    // Closing does NOT unconditionally refocus the editor, though the bar's own
+    // onClose does. That × is INSIDE the element being unmounted, so it has to
+    // rehome focus or focus lands on <body>. This caller is a title-bar button
+    // that stays mounted: pulling focus into the document from there strands a
+    // keyboard user somewhere they did not ask to be, and moves focus in the
+    // same commit as the aria-pressed flip, which tends to swallow the
+    // announcement. So refocus only when focus is actually inside the bar.
+    //
+    // findOpen is read through a ref, not the closure: this effect re-runs only
+    // when registerToggleFind changes, so a captured findOpen would be stuck at
+    // whatever it was on mount and the button would only ever open.
+    const findOpenRef = useRef(findOpen);
+    findOpenRef.current = findOpen;
+    const findBarRef = useRef<HTMLDivElement>(null);
+    useEffect(() => {
+        if (!registerToggleFind) return;
+        registerToggleFind(() => {
+            if (findOpenRef.current) {
+                const focusWasInBar = !!findBarRef.current?.contains(document.activeElement);
+                setFindOpen(false);
+                if (focusWasInBar) viewRef.current?.focus();
+                return;
+            }
+            setSelStartForFind(viewRef.current?.state.selection.main.from ?? 0);
+            setFindMode("find");
+            setFindOpen(true);
+        });
+        return () => registerToggleFind(null);
+    }, [registerToggleFind]);
+
+    // Report the bar's open state up so the title-bar button can announce it as
+    // a toggle. Covers every route in and out, the keymap and the bar's × as
+    // well as the button, so the button cannot disagree with the bar while both
+    // are mounted. It does NOT survive an unmount: closing the last tab takes
+    // CodeEditor with it and nothing reports the bar closed, so App resets its
+    // copy on hasFile instead.
+    //
+    // Read through a ref like this file's seven other callback props, so an
+    // inline arrow from a future caller cannot re-fire this on every render.
+    useEffect(() => {
+        onFindOpenChangeRef.current?.(findOpen);
+    }, [findOpen]);
+
     // Jump-to-line requests from the TOC / command palette (NAV-01). The editor
     // moves its caret and scrolls the line to the top; in preview-only mode this
     // pane is display:none so the scroll is a harmless no-op.
@@ -931,6 +995,7 @@ function CodeEditorImpl({
                 )}
 
                 <FindReplaceBar
+                    rootRef={findBarRef}
                     isOpen={findOpen}
                     initialMode={findMode}
                     content={content}

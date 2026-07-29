@@ -284,8 +284,18 @@ function AppContent() {
   // bar X). The Tauri close-requested handler below intercepts ALL of them.
   // Pending dirty-tab close, awaiting the Save/Discard/Cancel dialog. TABS-05.
   const [closeTabPrompt, setCloseTabPrompt] = useState<{ id: string; fileName: string } | null>(null);
-  // Find bar over the reader-mode preview (Ctrl+F when mode === "preview").
+  // Find bar over the reader-mode preview (Mod+F when mode === "preview").
   const [previewFindOpen, setPreviewFindOpen] = useState(false);
+  // The editor's own find bar lives inside CodeEditor, which registers a toggle
+  // here on mount. Held in a ref, not state: storing the callback in state would
+  // re-render App on every editor mount, and nothing renders off its value.
+  const toggleEditorFindRef = useRef<(() => void) | null>(null);
+  const registerToggleFind = useCallback((toggle: (() => void) | null) => {
+    toggleEditorFindRef.current = toggle;
+  }, []);
+  // Whether the editor's bar is open. This one IS state, unlike the callback
+  // above, because the title-bar button renders its pressed state from it.
+  const [editorFindOpen, setEditorFindOpen] = useState(false);
   // Autosave: save a moment after the user stops typing (Settings → Editor).
 
   // Sidebar panel state.
@@ -354,6 +364,16 @@ function AppContent() {
   const isDirty = content !== originalContent;
   // "Has a buffer" — true once a file is opened OR a blank Untitled buffer is started
   const hasFile = filePath !== null || fileName !== null;
+
+  // The editor's find bar reports its own state up, but only while it is
+  // mounted: closing the last tab unmounts CodeEditor and no close is ever
+  // reported, so a bar that was open leaves editorFindOpen stuck true. Reopen a
+  // file and the Find button would paint pressed over a closed bar until the
+  // remounted editor's report corrects it a commit later. Pairs with the
+  // preview-side reset on mode above.
+  useEffect(() => {
+    if (!hasFile) setEditorFindOpen(false);
+  }, [hasFile]);
 
   // Keep the native window title (taskbar / Alt-Tab) in step with the active
   // file and its dirty state, so two Dumont windows are distinguishable and
@@ -1606,6 +1626,20 @@ function AppContent() {
     return () => { void un.then((f) => f()); };
   }, []);
 
+  // The title-bar search button. One button, two destinations, because "find"
+  // means a different bar depending on what is on screen: the reader's searches
+  // rendered text, the editor's searches the source and can replace. Routing on
+  // mode is what lets the button mean "find in what I am looking at" in both.
+  // Split mode counts as editor: that is where the caret is.
+  // Toggles rather than opens: the button is the only find control that is
+  // always on screen, so a second click has to be the way back out. Clicking it
+  // while the bar is open is otherwise a dead click on the one affordance a
+  // mouse user has.
+  const handleFind = useCallback(() => {
+    if (mode === "preview") setPreviewFindOpen((open) => !open);
+    else toggleEditorFindRef.current?.();
+  }, [mode]);
+
   // App-wide keyboard shortcuts (window-level, mounted once). See the hook.
   useGlobalShortcuts({
     handleOpenFile, handleSaveFile, handleSaveAs, handleNewFile,
@@ -1618,7 +1652,7 @@ function AppContent() {
     // Through the helper, not setShowSettings: Ctrl+, must land on the grouped
     // panes even if the last open was the palette's JSON command.
     openSettings: () => openSettings(),
-    // Ctrl+F in reader mode opens the preview find bar (the editor keymap
+    // Mod+F in reader mode opens the preview find bar (the editor keymap
     // handles find in code/split mode, where the editor has focus). FIND-01.
     openPreviewFind: () => setPreviewFindOpen(true),
     openSearch: () => showModal("search"),
@@ -1734,6 +1768,9 @@ function AppContent() {
         filePath={filePath ?? undefined}
         onOpenFile={handleOpenFile}
         onNewFile={handleNewFile}
+        onFind={handleFind}
+        viewMode={mode}
+        findActive={mode === "preview" ? previewFindOpen : editorFindOpen}
         getExportHtml={getExportHtml}
         onExportSuccess={handleExportSuccess}
         onExportError={handleExportError}
@@ -1827,6 +1864,8 @@ function AppContent() {
                 filePath={filePath}
                 onScrollFraction={onCodeScrollFraction}
                 registerScroller={registerCodeScroller}
+                registerToggleFind={registerToggleFind}
+                onFindOpenChange={setEditorFindOpen}
                 typewriterMode={typewriterModeEnabled}
                 showToolbar={toolbarVisible}
                 wordWrap={wordWrapEnabled}

@@ -11,6 +11,44 @@ divider is the upstream project's changelog, retained for provenance.
 
 ## [Unreleased]
 
+### Added
+
+- **A Find button in the title bar.** Search had no clickable affordance at all:
+  every one of the three find surfaces was keyboard-only, and none of them
+  appeared in the command palette either, so there was no way to discover that
+  the app could search except by guessing the shortcut. The button toggles
+  whichever bar matches the current view, the reader's find-in-page in reader
+  mode and the editor's find bar in code or split mode, and it names the one it
+  will open in its tooltip and label. It toggles rather than only opens because
+  it is the one find control always on screen, so a second click has to be the
+  way back out.
+
+### Fixed
+
+- **Reader-mode Cmd+F and Cmd+Shift+F did nothing on macOS.** Both tested
+  `ctrlKey` alone, so find-in-page in reader mode and search-across-files needed
+  a literal Control key on a Mac, while the shortcut cheatsheet advertised them
+  as ⌘F and ⌘⇧F. The neighboring toggles that look like the same bug are not:
+  Cmd+Shift+O, B and H are registered as native menu accelerators, which is why
+  those handlers stay Ctrl-only. Find is deliberately kept out of the menu (a
+  menu accelerator would take Mod+F away from the editor), so nothing was
+  covering the Mac case for these two. Editor-mode Cmd+F was never affected; it
+  comes from the editor's own keymap, which needs editor focus. Cmd+F in split
+  view with the caret in the preview pane still does nothing, as before.
+- **Cmd+Shift+E did nothing on macOS.** Same cause as the find shortcuts: the
+  File Explorer menu item deliberately carries no accelerator, so the keyboard
+  handler was the only thing covering it, and it tested `ctrlKey` alone. Cmd+E
+  (toggle reader/editor) is left alone on purpose, because that one IS a menu
+  accelerator and widening it would toggle the mode twice.
+- **The cheatsheet listed only one of the two find bars.** Reader-mode find was
+  missing entirely; the single Find row sat under the editor group, so the bar
+  that opens in the default view was undocumented.
+- **Shortcut hints could name the wrong modifier key.** Four surfaces each kept a
+  private copy of the "is this a Mac" test, in two different flavors, and the two
+  that checked only the deprecated `navigator.platform` would fall back to
+  showing Ctrl on a Mac wherever that returns empty. They now share one
+  definition, which keeps the userAgent fallback.
+
 ## [1.1.0] - 2026-07-28
 
 ### Changed

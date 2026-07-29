@@ -8,11 +8,10 @@ import { getRecentFiles } from "../utils/persistence";
 import { THEMES } from "../utils/appearanceOptions";
 import type { Theme } from "../context/ThemeContext";
 import type { ViewMode } from "../components/ModeToggle";
+import { IS_MAC } from "../utils/platform";
 
 const THEME_CHOICES = THEMES;
 
-const IS_MAC =
-    typeof navigator !== "undefined" && /mac/i.test(navigator.platform || navigator.userAgent || "");
 const AI_SHORTCUT = IS_MAC ? "\u2318J" : "Alt+J";
 
 /**

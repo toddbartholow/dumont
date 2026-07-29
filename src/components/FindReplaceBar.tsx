@@ -9,6 +9,9 @@ interface FindReplaceBarProps {
     onClose: () => void;
     onReplace: (newContent: string, newCursor: number) => void;
     onJumpTo: (start: number, end: number) => void;
+    /** The bar's root, so a caller closing it from outside can tell whether focus
+     *  is currently inside it and therefore needs rehoming. */
+    rootRef?: React.Ref<HTMLDivElement>;
 }
 
 interface MatchResult {
@@ -24,6 +27,7 @@ export function FindReplaceBar({
     onClose,
     onReplace,
     onJumpTo,
+    rootRef,
 }: FindReplaceBarProps) {
     const [query, setQuery] = useState("");
     const [replacement, setReplacement] = useState("");
@@ -166,6 +170,7 @@ export function FindReplaceBar({
 
     return (
         <div
+            ref={rootRef}
             role="dialog"
             aria-label="Find and replace"
             className="absolute top-2 right-4 z-40 bg-[var(--bg-secondary)] border border-[var(--border)] rounded-lg shadow-xl px-2 py-2 flex flex-col gap-2 animate-fade-in-down"

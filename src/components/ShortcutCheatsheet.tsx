@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { attachFocusTrap } from "../utils/focusTrap";
+import { IS_MAC, IS_WINDOWS } from "../utils/platform";
 
 interface ShortcutCheatsheetProps {
     isOpen: boolean;
@@ -16,8 +17,8 @@ interface ShortcutGroup {
     items: Shortcut[];
 }
 
-const isMac = typeof navigator !== "undefined" && /Mac|iPod|iPhone|iPad/.test(navigator.platform);
-const isWindows = typeof navigator !== "undefined" && /Win/.test(navigator.platform);
+const isMac = IS_MAC;
+const isWindows = IS_WINDOWS;
 const cmd = isMac ? "⌘" : "Ctrl";
 // On Windows, WebView2 grabs Ctrl+J for the built-in Downloads UI before
 // the page can preventDefault, so we surface Alt+J as the primary AI
@@ -56,6 +57,11 @@ const groups: ShortcutGroup[] = [
             { keys: "F11", description: "Toggle fullscreen" },
             { keys: `${cmd}+Shift+B`, description: "Toggle backlinks" },
             { keys: `${cmd}+Shift+E`, description: "Toggle file explorer" },
+            // Two Find rows, because there are two find bars and they are not the
+            // same feature: the reader searches rendered text, the editor searches
+            // the source and can replace. The editor's row lives in the editor
+            // navigation group below, with its own modifier note.
+            { keys: `${cmd}+F`, description: "Find in page (reader mode)" },
             { keys: `${cmd}+Shift+F`, description: "Search across files" },
             { keys: `${cmd}+Shift+O`, description: "Toggle outline" },
             { keys: `${cmd}+Shift+H`, description: "Toggle version history" },

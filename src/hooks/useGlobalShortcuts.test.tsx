@@ -33,8 +33,13 @@ function Harness({ handlers }: { handlers: ShortcutHandlers }) {
     return null;
 }
 
+// Returns the event so a caller can assert defaultPrevented. Claiming the key
+// from the webview is half the point of these handlers, and a handler that fires
+// but never preventDefaults still lets the browser act on the chord.
 function press(init: KeyboardEventInit) {
-    window.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, cancelable: true, ...init }));
+    const ev = new KeyboardEvent("keydown", { bubbles: true, cancelable: true, ...init });
+    window.dispatchEvent(ev);
+    return ev;
 }
 
 describe("useGlobalShortcuts", () => {
@@ -120,6 +125,125 @@ describe("useGlobalShortcuts gating", () => {
         const h = makeHandlers({ mode: "code", openPreviewFind: vi.fn() });
         render(<Harness handlers={h} />);
         press({ key: "f", ctrlKey: true });
+        expect(h.openPreviewFind).not.toHaveBeenCalled();
+    });
+
+    // The macOS half of both F shortcuts. Find is deliberately kept out of the
+    // native menu, so nothing else covers Cmd here: before these, ⌘F and
+    // ⌘⇧F were dead on macOS while the cheatsheet advertised them.
+    it("Cmd+F opens preview find in reader mode, and claims the key", () => {
+        const h = makeHandlers({ mode: "preview", openPreviewFind: vi.fn() });
+        render(<Harness handlers={h} />);
+        const ev = press({ key: "f", metaKey: true });
+        expect(h.openPreviewFind).toHaveBeenCalledTimes(1);
+        expect(ev.defaultPrevented).toBe(true);
+    });
+
+    it("Cmd+F is left to the editor in code mode", () => {
+        const h = makeHandlers({ mode: "code", openPreviewFind: vi.fn() });
+        render(<Harness handlers={h} />);
+        press({ key: "f", metaKey: true });
+        expect(h.openPreviewFind).not.toHaveBeenCalled();
+    });
+
+    // Opt+Cmd+F is the editor's replace. The reader handler must not eat it.
+    it("Opt+Cmd+F does not open preview find", () => {
+        const h = makeHandlers({ mode: "preview", openPreviewFind: vi.fn() });
+        render(<Harness handlers={h} />);
+        press({ key: "f", metaKey: true, altKey: true });
+        expect(h.openPreviewFind).not.toHaveBeenCalled();
+    });
+
+    // The File Explorer menu item carries no accelerator, so the hook is the only
+    // thing covering this one and Cmd+Shift+E was dead on macOS.
+    it("Cmd+Shift+E toggles the file explorer", () => {
+        const h = makeHandlers();
+        render(<Harness handlers={h} />);
+        press({ key: "e", metaKey: true, shiftKey: true });
+        expect(h.handleToggleFileExplorer).toHaveBeenCalledTimes(1);
+    });
+
+    it("Ctrl+Shift+E still toggles the file explorer", () => {
+        const h = makeHandlers();
+        render(<Harness handlers={h} />);
+        press({ key: "E", ctrlKey: true, shiftKey: true });
+        expect(h.handleToggleFileExplorer).toHaveBeenCalledTimes(1);
+    });
+
+    // The shortcuts below are registered as native menu accelerators in
+    // src-tauri/src/menu.rs, and AppKit matches those before the key reaches the
+    // webview. Handling them here TOO would run them twice on macOS, which for a
+    // toggle means it flips back and looks like nothing happened.
+    //
+    // These four tests exist because the alternative is a comment. Widening them
+    // to (ctrlKey || metaKey) "for consistency" with the F and E handlers is the
+    // single most plausible way this regresses, and prose does not fail CI.
+    it("Cmd+E is left to the menu, not handled here", () => {
+        const h = makeHandlers();
+        render(<Harness handlers={h} />);
+        press({ key: "e", metaKey: true });
+        expect(h.handleToggleMode).not.toHaveBeenCalled();
+    });
+
+    it("Cmd+Shift+O is left to the menu, not handled here", () => {
+        const h = makeHandlers();
+        render(<Harness handlers={h} />);
+        press({ key: "o", metaKey: true, shiftKey: true });
+        expect(h.handleToggleTOC).not.toHaveBeenCalled();
+    });
+
+    it("Cmd+Shift+B is left to the menu, not handled here", () => {
+        const h = makeHandlers();
+        render(<Harness handlers={h} />);
+        press({ key: "b", metaKey: true, shiftKey: true });
+        expect(h.handleToggleBacklinks).not.toHaveBeenCalled();
+    });
+
+    it("Cmd+Shift+H is left to the menu, not handled here", () => {
+        const h = makeHandlers();
+        render(<Harness handlers={h} />);
+        press({ key: "h", metaKey: true, shiftKey: true });
+        expect(h.handleToggleHistory).not.toHaveBeenCalled();
+    });
+
+    // AltGr reports as ctrlKey+altKey on Windows and Linux layouts, so the
+    // widened handlers must not swallow it.
+    it("Ctrl+Alt+Shift+E does not toggle the file explorer", () => {
+        const h = makeHandlers();
+        render(<Harness handlers={h} />);
+        press({ key: "e", ctrlKey: true, altKey: true, shiftKey: true });
+        expect(h.handleToggleFileExplorer).not.toHaveBeenCalled();
+    });
+
+    it("Ctrl+Alt+Shift+F does not open cross-file search", () => {
+        const h = makeHandlers({ openSearch: vi.fn() });
+        render(<Harness handlers={h} />);
+        press({ key: "f", ctrlKey: true, altKey: true, shiftKey: true });
+        expect(h.openSearch).not.toHaveBeenCalled();
+    });
+
+    it("Cmd+Shift+F opens cross-file search, and claims the key", () => {
+        const h = makeHandlers({ openSearch: vi.fn() });
+        render(<Harness handlers={h} />);
+        const ev = press({ key: "f", metaKey: true, shiftKey: true });
+        expect(h.openSearch).toHaveBeenCalledTimes(1);
+        expect(ev.defaultPrevented).toBe(true);
+    });
+
+    it("Ctrl+Shift+F still opens cross-file search", () => {
+        const h = makeHandlers({ openSearch: vi.fn() });
+        render(<Harness handlers={h} />);
+        press({ key: "F", ctrlKey: true, shiftKey: true });
+        expect(h.openSearch).toHaveBeenCalledTimes(1);
+    });
+
+    // The reader branch requires !shiftKey, so the shifted chord cannot reach it.
+    // (The early return in the cross-file branch is belt and braces, not what
+    // makes this hold, so deleting that return would leave this test green.)
+    it("Cmd+Shift+F does not also open the reader find bar", () => {
+        const h = makeHandlers({ mode: "preview", openSearch: vi.fn(), openPreviewFind: vi.fn() });
+        render(<Harness handlers={h} />);
+        press({ key: "f", metaKey: true, shiftKey: true });
         expect(h.openPreviewFind).not.toHaveBeenCalled();
     });
 
