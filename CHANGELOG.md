@@ -11,6 +11,8 @@ divider is the upstream project's changelog, retained for provenance.
 
 ## [Unreleased]
 
+## [1.1.1] - 2026-07-29
+
 ### Added
 
 - **A Find button in the title bar.** Search had no clickable affordance at all:
