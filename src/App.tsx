@@ -286,12 +286,16 @@ function AppContent() {
   const [closeTabPrompt, setCloseTabPrompt] = useState<{ id: string; fileName: string } | null>(null);
   // Find bar over the reader-mode preview (Mod+F when mode === "preview").
   const [previewFindOpen, setPreviewFindOpen] = useState(false);
+  // Bumped on every request to OPEN the reader find bar. See the same signal in
+  // CodeEditor: a repeat Mod+F has to refocus a bar that is already open, and
+  // "open" is not a state change when it is already true.
+  const [previewFindFocusSignal, setPreviewFindFocusSignal] = useState(0);
   // The editor's own find bar lives inside CodeEditor, which registers a toggle
   // here on mount. Held in a ref, not state: storing the callback in state would
   // re-render App on every editor mount, and nothing renders off its value.
-  const toggleEditorFindRef = useRef<(() => void) | null>(null);
-  const registerToggleFind = useCallback((toggle: (() => void) | null) => {
-    toggleEditorFindRef.current = toggle;
+  const editorFindActionRef = useRef<((action: "toggle" | "open") => void) | null>(null);
+  const registerFindAction = useCallback((run: ((action: "toggle" | "open") => void) | null) => {
+    editorFindActionRef.current = run;
   }, []);
   // Whether the editor's bar is open. This one IS state, unlike the callback
   // above, because the title-bar button renders its pressed state from it.
@@ -380,7 +384,7 @@ function AppContent() {
   // a leading bullet flags unsaved work. Keyed on the dirty BOOLEAN (not raw
   // content) so it doesn't fire an IPC call on every keystroke. TITLE-01.
   useEffect(() => {
-    const title = fileName ? `${isDirty ? "• " : ""}${fileName} — Dumont` : "Dumont";
+    const title = fileName ? `${isDirty ? "• " : ""}${fileName} - Dumont` : "Dumont";
     Window.getCurrent().setTitle(title).catch(() => {/* browser dev mode */});
   }, [fileName, isDirty]);
 
@@ -1637,7 +1641,22 @@ function AppContent() {
   // mouse user has.
   const handleFind = useCallback(() => {
     if (mode === "preview") setPreviewFindOpen((open) => !open);
-    else toggleEditorFindRef.current?.();
+    else editorFindActionRef.current?.("toggle");
+  }, [mode]);
+
+  // Mod+F. Opens rather than toggles, and refocuses a bar that is already open,
+  // which is what browsers and editors do and what the title-bar button must NOT
+  // do. Routed on mode exactly like the button, so split view sends it to the
+  // editor's bar (the reader bar is deliberately reader-mode only, see the reset
+  // effect above) and the two affordances never disagree about which bar is
+  // "the" find bar for the current view.
+  const handleFindShortcut = useCallback(() => {
+    if (mode === "preview") {
+      setPreviewFindOpen(true);
+      setPreviewFindFocusSignal((n) => n + 1);
+    } else {
+      editorFindActionRef.current?.("open");
+    }
   }, [mode]);
 
   // App-wide keyboard shortcuts (window-level, mounted once). See the hook.
@@ -1652,9 +1671,10 @@ function AppContent() {
     // Through the helper, not setShowSettings: Ctrl+, must land on the grouped
     // panes even if the last open was the palette's JSON command.
     openSettings: () => openSettings(),
-    // Mod+F in reader mode opens the preview find bar (the editor keymap
-    // handles find in code/split mode, where the editor has focus). FIND-01.
-    openPreviewFind: () => setPreviewFindOpen(true),
+    // Mod+F. The editor's own keymap still handles it whenever the editor has
+    // focus; this is the fallback for every other case, including split view
+    // with the caret in the preview pane. FIND-01.
+    openFind: handleFindShortcut,
     openSearch: () => showModal("search"),
     closeActiveTab: () => { if (activeTabIdRef.current) closeTab(activeTabIdRef.current); },
     prevTab: () => cycleTab(-1),
@@ -1864,7 +1884,7 @@ function AppContent() {
                 filePath={filePath}
                 onScrollFraction={onCodeScrollFraction}
                 registerScroller={registerCodeScroller}
-                registerToggleFind={registerToggleFind}
+                registerFindAction={registerFindAction}
                 onFindOpenChange={setEditorFindOpen}
                 typewriterMode={typewriterModeEnabled}
                 showToolbar={toolbarVisible}
@@ -1921,6 +1941,7 @@ function AppContent() {
               {previewFindOpen && (
                 <PreviewFindBar
                   rootRef={previewRef}
+                  focusSignal={previewFindFocusSignal}
                   onClose={() => setPreviewFindOpen(false)}
                 />
               )}

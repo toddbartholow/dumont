@@ -68,29 +68,30 @@ describe("editor typography follows the Settings font and size", () => {
     });
 });
 
-// The title-bar Find button reaches the editor's find bar through a registered
-// callback, because that bar's state lives in here. The toggle reads findOpen
-// from a ref rather than the effect's closure; capture it instead and the second
-// click is a no-op, which is the whole failure this guards.
-describe("registerToggleFind", () => {
+// The title-bar Find button and the global Mod+F handler both reach the editor's
+// find bar through a registered callback, because that bar's state lives in here.
+// They want different things from it: the button toggles, the shortcut only ever
+// opens. The callback reads findOpen from a ref rather than the effect's closure;
+// capture it instead and the second click is a no-op, which this guards.
+describe("registerFindAction", () => {
     // The register prop is a vi.fn() rather than an inline arrow on purpose. An
     // inline arrow is a new identity every render, so the registering effect
-    // re-runs constantly and hands out a freshly-closed-over toggle each time,
+    // re-runs constantly and hands out a freshly-closed-over callback each time,
     // which is exactly the condition that would HIDE the stale-closure bug. In
-    // production App's registerToggleFind is useCallback-stable, the effect runs
-    // once, and the ref is what keeps the single long-lived toggle correct.
+    // production App's registerFindAction is useCallback-stable, the effect runs
+    // once, and the ref is what keeps the single long-lived callback correct.
     // A stable mock reproduces that.
-    type ToggleFind = () => void;
+    type FindAction = (action: "toggle" | "open") => void;
 
     async function mount() {
-        const registerToggleFind = vi.fn<(t: ToggleFind | null) => void>();
+        const registerFindAction = vi.fn<(t: FindAction | null) => void>();
         const onFindOpenChange = vi.fn<(open: boolean) => void>();
         const { container, unmount } = render(
             <TestProviders>
                 <CodeEditor
                     content="hello"
                     onChange={() => {}}
-                    registerToggleFind={registerToggleFind}
+                    registerFindAction={registerFindAction}
                     onFindOpenChange={onFindOpenChange}
                 />
             </TestProviders>,
@@ -98,32 +99,61 @@ describe("registerToggleFind", () => {
         await waitFor(() => expect(container.querySelector(".cm-content")).toBeTruthy());
         // A throw, not a cast: this narrows on a real runtime check, and it fails
         // legibly if registration ever stops happening instead of blowing up as
-        // "toggle is not a function" from inside act().
-        const toggle = registerToggleFind.mock.lastCall?.[0];
-        if (typeof toggle !== "function") throw new Error("CodeEditor never registered a find toggle");
-        return { toggle, onFindOpenChange, registerToggleFind, unmount };
+        // "run is not a function" from inside act().
+        const run = registerFindAction.mock.lastCall?.[0];
+        if (typeof run !== "function") throw new Error("CodeEditor never registered a find action");
+        return { run, onFindOpenChange, registerFindAction, unmount };
     }
 
-    it("opens the find bar, then closes it on a second call", async () => {
-        const { toggle } = await mount();
+    const findInput = () => screen.queryByLabelText("Find text");
 
-        act(() => toggle());
-        await waitFor(() => expect(screen.queryByLabelText("Find text")).toBeTruthy());
+    it("opens the find bar, then closes it on a second toggle", async () => {
+        const { run } = await mount();
 
-        act(() => toggle());
-        await waitFor(() => expect(screen.queryByLabelText("Find text")).toBeNull());
+        act(() => run("toggle"));
+        await waitFor(() => expect(findInput()).toBeTruthy());
+
+        act(() => run("toggle"));
+        await waitFor(() => expect(findInput()).toBeNull());
+    });
+
+    // "open" is the keyboard's action. Mod+F on an already-open bar means "take
+    // me to the search box", never "close it", so this must NOT toggle.
+    it("open never closes an already-open bar", async () => {
+        const { run } = await mount();
+
+        act(() => run("open"));
+        await waitFor(() => expect(findInput()).toBeTruthy());
+
+        act(() => run("open"));
+        await waitFor(() => expect(findInput()).toBeTruthy());
+    });
+
+    it("open refocuses the query box when the bar is already open", async () => {
+        const { run } = await mount();
+        act(() => run("open"));
+        await waitFor(() => expect(findInput()).toBeTruthy());
+
+        const outside = document.createElement("button");
+        document.body.appendChild(outside);
+        outside.focus();
+        expect(document.activeElement).toBe(outside);
+
+        act(() => run("open"));
+        await waitFor(() => expect(document.activeElement).toBe(findInput()));
+        outside.remove();
     });
 
     it("reports every open and close to onFindOpenChange", async () => {
-        const { toggle, onFindOpenChange } = await mount();
+        const { run, onFindOpenChange } = await mount();
         onFindOpenChange.mockClear();
 
         // lastCall, not toHaveBeenCalledWith: the latter scans every call, so a
         // spurious extra report after the one we want would still pass.
-        act(() => toggle());
+        act(() => run("toggle"));
         await waitFor(() => expect(onFindOpenChange.mock.lastCall).toEqual([true]));
 
-        act(() => toggle());
+        act(() => run("toggle"));
         await waitFor(() => expect(onFindOpenChange.mock.lastCall).toEqual([false]));
     });
 
@@ -131,23 +161,23 @@ describe("registerToggleFind", () => {
     // that button stays mounted, unlike the bar's own × which has to rehome
     // focus because it is inside what is being removed.
     it("leaves focus alone when closed from outside the bar", async () => {
-        const { toggle } = await mount();
-        act(() => toggle());
-        await waitFor(() => expect(screen.queryByLabelText("Find text")).toBeTruthy());
+        const { run } = await mount();
+        act(() => run("toggle"));
+        await waitFor(() => expect(findInput()).toBeTruthy());
 
         const outside = document.createElement("button");
         document.body.appendChild(outside);
         outside.focus();
 
-        act(() => toggle());
-        await waitFor(() => expect(screen.queryByLabelText("Find text")).toBeNull());
+        act(() => run("toggle"));
+        await waitFor(() => expect(findInput()).toBeNull());
         expect(document.activeElement).toBe(outside);
         outside.remove();
     });
 
     it("hands the callback back as null on unmount", async () => {
-        const { registerToggleFind, unmount } = await mount();
+        const { registerFindAction, unmount } = await mount();
         unmount();
-        expect(registerToggleFind).toHaveBeenLastCalledWith(null);
+        expect(registerFindAction).toHaveBeenLastCalledWith(null);
     });
 });

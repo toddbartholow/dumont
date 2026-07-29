@@ -77,7 +77,7 @@ const groups: ShortcutGroup[] = [
         ],
     },
     {
-        title: "Editor — Formatting",
+        title: "Editor: Formatting",
         items: [
             { keys: `${cmd}+B`, description: "Bold (toggle)" },
             { keys: `${cmd}+I`, description: "Italic (toggle)" },
@@ -86,7 +86,7 @@ const groups: ShortcutGroup[] = [
         ],
     },
     {
-        title: "Editor — Navigation",
+        title: "Editor: Navigation",
         items: [
             { keys: "Tab", description: "Indent line / selection" },
             { keys: "Shift+Tab", description: "Outdent line / selection" },
@@ -99,7 +99,7 @@ const groups: ShortcutGroup[] = [
         ],
     },
     {
-        title: "Editor — Auto-pair",
+        title: "Editor: Auto-pair",
         items: [
             { keys: "( [ { ` \" '", description: "Wrap selection or insert pair" },
             { keys: ") ] } ` \" '", description: "Type past matching closer" },

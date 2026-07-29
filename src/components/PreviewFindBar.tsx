@@ -15,6 +15,9 @@ interface PreviewFindBarProps {
     /** The rendered markdown body (App's previewRef / markdownBodyRef). */
     rootRef: React.RefObject<HTMLElement | null>;
     onClose: () => void;
+    /** Bump to refocus and select the query on an already-open bar. The VALUE is
+     *  meaningless; only that it changed matters. */
+    focusSignal?: number;
 }
 
 const MAX_MATCHES = 5000;
@@ -60,17 +63,25 @@ function clearHighlights() {
     }
 }
 
-export function PreviewFindBar({ rootRef, onClose }: PreviewFindBarProps) {
+export function PreviewFindBar({ rootRef, onClose, focusSignal = 0 }: PreviewFindBarProps) {
     const [query, setQuery] = useState("");
     const [activeIdx, setActiveIdx] = useState(0);
     const [matchCount, setMatchCount] = useState(0);
     const rangesRef = useRef<Range[]>([]);
     const inputRef = useRef<HTMLInputElement>(null);
 
+    // Highlights are torn down on unmount only, which is why this stays keyed on
+    // [] and the focus below is a separate effect.
+    useEffect(() => clearHighlights, []);
+
+    // Focus on open, and again on every bump. Unlike the editor's bar this one
+    // DOES unmount when closed, so mount covers the open case; the signal is
+    // what makes a repeat Mod-f on an already-open bar refocus and select the
+    // query instead of doing nothing at all.
     useEffect(() => {
         inputRef.current?.focus();
-        return clearHighlights;
-    }, []);
+        inputRef.current?.select();
+    }, [focusSignal]);
 
     // Recompute matches when the query changes (debounced a touch so typing
     // in the find box doesn't walk the whole document per keystroke).

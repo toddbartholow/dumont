@@ -20,8 +20,9 @@ export interface ShortcutHandlers {
     openCheatsheet: () => void;
     openPalette: () => void;
     openSettings: () => void;
-    /** Open the reader-mode find bar. Only invoked when mode === "preview". */
-    openPreviewFind?: () => void;
+    /** Open (never toggle) the find bar for the current view, and focus it. Only
+     *  invoked when the editor's own keymap has not already claimed the key. */
+    openFind?: () => void;
     /** Open cross-file search (Ctrl+Shift+F). */
     openSearch?: () => void;
     /** Close the active tab (Ctrl+W). */
@@ -163,13 +164,26 @@ export function useGlobalShortcuts(handlers: ShortcutHandlers) {
                 if (s.hasFile) s.openSearch?.();
                 return;
             }
-            // Mod+F in reader mode - find in preview. In code/split mode the
-            // focused editor's own keymap handles Mod-f, so this never races it.
-            // !altKey keeps Opt+Cmd+F, the editor's replace, out of here.
+            // Mod+F - find in the current view. !altKey keeps Opt+Cmd+F, the
+            // editor's replace, out of here.
+            //
+            // The defaultPrevented check is what lets this cover code and split
+            // view as well as the reader. CodeMirror's own Mod-f binding lives on
+            // the editor's DOM and preventDefaults when it fires; this listener is
+            // on window in the BUBBLE phase, so by the time it runs the editor has
+            // already had its say. Seeing the flag set means the focused editor
+            // handled it and this must keep out; seeing it clear means no editor
+            // had focus, which is exactly the case that used to fall through to
+            // nothing: split view with the caret in the preview pane, or code mode
+            // after a dialog closed and left focus on <body>.
+            //
+            // Do NOT switch this listener to capture phase without revisiting
+            // this. In capture, window runs FIRST, the flag is always clear, and
+            // every Mod+F in a focused editor fires both paths.
             if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && (e.key === "f" || e.key === "F")) {
-                if (s.hasFile && s.mode === "preview" && s.openPreviewFind) {
+                if (s.hasFile && !e.defaultPrevented && s.openFind) {
                     e.preventDefault();
-                    s.openPreviewFind();
+                    s.openFind();
                 }
             }
             // Alt+Left / Alt+Right - switch to the previous/next tab. Alt (not

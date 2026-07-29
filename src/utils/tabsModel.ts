@@ -153,7 +153,7 @@ export function computeTabLabels(
         suffix = mine;
         if (!collision) break;
       }
-      labels.set(g.id, suffix ? `${name} — ${suffix}` : name);
+      labels.set(g.id, suffix ? `${name} (${suffix})` : name);
     }
   }
   return labels;

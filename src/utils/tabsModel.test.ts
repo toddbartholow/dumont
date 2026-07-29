@@ -160,24 +160,24 @@ describe("computeTabLabels", () => {
       { id: "1", fileName: "README.md", filePath: "/proj/docs/README.md" },
       { id: "2", fileName: "README.md", filePath: "/proj/src/README.md" },
     ]);
-    expect(labels.get("1")).toBe("README.md — docs");
-    expect(labels.get("2")).toBe("README.md — src");
+    expect(labels.get("1")).toBe("README.md (docs)");
+    expect(labels.get("2")).toBe("README.md (src)");
   });
   it("walks further up when the immediate parent also collides", () => {
     const labels = computeTabLabels([
       { id: "1", fileName: "README.md", filePath: "/a/docs/README.md" },
       { id: "2", fileName: "README.md", filePath: "/b/docs/README.md" },
     ]);
-    expect(labels.get("1")).toBe("README.md — a/docs");
-    expect(labels.get("2")).toBe("README.md — b/docs");
+    expect(labels.get("1")).toBe("README.md (a/docs)");
+    expect(labels.get("2")).toBe("README.md (b/docs)");
   });
   it("handles Windows separators", () => {
     const labels = computeTabLabels([
       { id: "1", fileName: "note.md", filePath: "C:\\one\\note.md" },
       { id: "2", fileName: "note.md", filePath: "C:\\two\\note.md" },
     ]);
-    expect(labels.get("1")).toBe("note.md — one");
-    expect(labels.get("2")).toBe("note.md — two");
+    expect(labels.get("1")).toBe("note.md (one)");
+    expect(labels.get("2")).toBe("note.md (two)");
   });
 });
 

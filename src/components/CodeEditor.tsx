@@ -61,16 +61,18 @@ interface CodeEditorProps {
     filePath?: string | null;
     onScrollFraction?: (fraction: number) => void;
     registerScroller?: (scroller: Scroller | null) => void;
-    /** Hands App a function that toggles this editor's find bar, so the title-bar
-     *  search button can reach state that lives in here. Same register-a-callback
-     *  shape as registerScroller (called with null on unmount) rather than a
-     *  forwarded ref, to match the one pattern this file already uses.
+    /** Hands App a function that drives this editor's find bar, so the title-bar
+     *  button and the global Mod+F handler can reach state that lives in here.
+     *  Same register-a-callback shape as registerScroller (called with null on
+     *  unmount) rather than a forwarded ref, to match the one pattern this file
+     *  already uses.
      *
-     *  Takes no mode argument. It used to accept "find" | "replace", but the only
-     *  caller passes "find" and the replace paths go through the keymap instead,
-     *  so the second arm was untested speculative generality. Add it back when a
-     *  second caller actually needs it. */
-    registerToggleFind?: (toggle: (() => void) | null) => void;
+     *  The action is not speculative generality: the two callers genuinely differ.
+     *  A button that is always on screen must toggle, or a second click on the
+     *  only visible affordance is dead. A keyboard shortcut must NOT toggle:
+     *  Mod+F on an open bar means "take me to the search box", not "close it",
+     *  which is what every browser and editor does. */
+    registerFindAction?: (run: ((action: "toggle" | "open") => void) | null) => void;
     /** Fires whenever the find bar opens or closes, by any route. */
     onFindOpenChange?: (open: boolean) => void;
     typewriterMode?: boolean;
@@ -199,7 +201,7 @@ function CodeEditorImpl({
     filePath,
     onScrollFraction,
     registerScroller,
-    registerToggleFind,
+    registerFindAction,
     onFindOpenChange,
     typewriterMode,
     showToolbar,
@@ -294,6 +296,11 @@ function CodeEditorImpl({
     const [findOpen, setFindOpen] = useState(false);
     const [findMode, setFindMode] = useState<"find" | "replace">("find");
     const [selStartForFind, setSelStartForFind] = useState(0);
+    // Bumped on every request to OPEN the find bar, including ones that arrive
+    // when it is already open. findOpen cannot carry that: setting it true when
+    // it is already true is not a state change, so a repeat Mod-f used to be a
+    // dead key. The bar refocuses and selects its query on each bump.
+    const [findFocusSignal, setFindFocusSignal] = useState(0);
     const [slashState, setSlashState] = useState<{ from: number; pos: { x: number; y: number } } | null>(null);
     const [slashQuery, setSlashQuery] = useState("");
     const [aiBubble, setAIBubble] = useState<{ x: number; y: number; selStart: number; selEnd: number; text: string } | null>(null);
@@ -402,7 +409,7 @@ function CodeEditorImpl({
         const view = viewRef.current;
         if (!view) return;
         if (!aiConfigRef.current?.endpoint) {
-            onNoticeRef.current?.("AI isn't set up yet — add an endpoint in Settings → AI to enable AI assist.");
+            onNoticeRef.current?.("AI isn't set up yet. Add an endpoint in Settings → AI to enable AI assist.");
             return;
         }
         const sel = view.state.selection.main;
@@ -442,7 +449,7 @@ function CodeEditorImpl({
                     return true;
                 }
             },
-            { key: "Mod-f", run: (v) => { setSelStartForFind(v.state.selection.main.from); setFindMode("find"); setFindOpen(true); return true; } },
+            { key: "Mod-f", run: (v) => { setSelStartForFind(v.state.selection.main.from); setFindMode("find"); setFindOpen(true); setFindFocusSignal((n) => n + 1); return true; } },
             // Replace. Mod-h is Ctrl+H on Windows and Linux, which is standard there.
             // On macOS Mod-h is Cmd+H, and Cmd+H is Hide: the OS matches a main-menu
             // key equivalent before the key ever reaches the webview, so the editor
@@ -819,20 +826,27 @@ function CodeEditorImpl({
     findOpenRef.current = findOpen;
     const findBarRef = useRef<HTMLDivElement>(null);
     useEffect(() => {
-        if (!registerToggleFind) return;
-        registerToggleFind(() => {
-            if (findOpenRef.current) {
+        if (!registerFindAction) return;
+        registerFindAction((action) => {
+            if (action === "toggle" && findOpenRef.current) {
                 const focusWasInBar = !!findBarRef.current?.contains(document.activeElement);
                 setFindOpen(false);
                 if (focusWasInBar) viewRef.current?.focus();
                 return;
             }
-            setSelStartForFind(viewRef.current?.state.selection.main.from ?? 0);
-            setFindMode("find");
-            setFindOpen(true);
+            // Reaching here means "open it". Seed the search origin only when the
+            // bar is actually closed: on a repeat Mod+F the user is coming back to
+            // a search in progress, and resetting the origin to the current caret
+            // would make Enter jump to a different match than the one they left.
+            if (!findOpenRef.current) {
+                setSelStartForFind(viewRef.current?.state.selection.main.from ?? 0);
+                setFindMode("find");
+                setFindOpen(true);
+            }
+            setFindFocusSignal((n) => n + 1);
         });
-        return () => registerToggleFind(null);
-    }, [registerToggleFind]);
+        return () => registerFindAction(null);
+    }, [registerFindAction]);
 
     // Report the bar's open state up so the title-bar button can announce it as
     // a toggle. Covers every route in and out, the keymap and the bar's × as
@@ -996,6 +1010,7 @@ function CodeEditorImpl({
 
                 <FindReplaceBar
                     rootRef={findBarRef}
+                    focusSignal={findFocusSignal}
                     isOpen={findOpen}
                     initialMode={findMode}
                     content={content}

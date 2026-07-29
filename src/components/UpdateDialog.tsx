@@ -163,8 +163,8 @@ export function UpdateDialog() {
                         <div className="min-w-0">
                             <h2 className="text-base font-semibold text-[var(--text-primary)]">Update available</h2>
                             <p className="text-sm text-[var(--text-secondary)] mt-0.5">
-                                Dumont <span className="font-semibold text-[var(--text-primary)]">v{update.version}</span> is ready
-                                — you're on v{update.currentVersion}.
+                                Dumont <span className="font-semibold text-[var(--text-primary)]">v{update.version}</span> is ready.
+                                You're on v{update.currentVersion}.
                             </p>
                         </div>
                     </div>
@@ -193,7 +193,7 @@ export function UpdateDialog() {
                             </div>
                             <p className="mt-2 text-[12px] text-[var(--text-secondary)]">
                                 {phase === "installed"
-                                    ? "Installed — restarting…"
+                                    ? "Installed, restarting…"
                                     : progress >= 0
                                         ? `Downloading… ${Math.round(progress * 100)}%`
                                         : "Downloading…"}

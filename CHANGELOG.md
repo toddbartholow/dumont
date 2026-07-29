@@ -23,6 +23,22 @@ divider is the upstream project's changelog, retained for provenance.
   it is the one find control always on screen, so a second click has to be the
   way back out.
 
+### Changed
+
+- **Ctrl+F on an already-open find bar now takes you back to the search box**
+  instead of doing nothing. It refocuses the field and selects the query, the way
+  browsers and other editors behave. The search origin is left alone on a repeat
+  press, so coming back to a search in progress does not silently move which
+  match Enter jumps to next. The title-bar button still toggles, because a button
+  that is always on screen needs a second click that closes.
+- **Em dashes are gone from the text the app displays.** The house style has
+  banned them since the fork, but the strings had never been swept: the window
+  title, the tab label for two same-named files, the cheatsheet's group headings,
+  the unsaved-changes tooltip, the AI placeholder and error messages, the update
+  dialog, and the fullscreen toast all carried one. They are now commas, colons,
+  parentheses or two sentences. Code comments still have them and are left for a
+  separate pass.
+
 ### Fixed
 
 - **Reader-mode Cmd+F and Cmd+Shift+F did nothing on macOS.** Both tested
@@ -32,9 +48,14 @@ divider is the upstream project's changelog, retained for provenance.
   Cmd+Shift+O, B and H are registered as native menu accelerators, which is why
   those handlers stay Ctrl-only. Find is deliberately kept out of the menu (a
   menu accelerator would take Mod+F away from the editor), so nothing was
-  covering the Mac case for these two. Editor-mode Cmd+F was never affected; it
-  comes from the editor's own keymap, which needs editor focus. Cmd+F in split
-  view with the caret in the preview pane still does nothing, as before.
+  covering the Mac case for these two.
+- **Ctrl+F did nothing in split view with the caret in the preview pane**, and in
+  code mode whenever focus had fallen outside the editor (after a dialog closed,
+  say). Find in code and split view comes from the editor's own keymap, which
+  needs editor focus, and the app's handler only covered reader mode, so those
+  cases fell through to nothing on every platform. The handler now covers them,
+  and keeps out of the focused-editor case by checking whether the editor already
+  claimed the key rather than by guessing from the view mode.
 - **Cmd+Shift+E did nothing on macOS.** Same cause as the find shortcuts: the
   File Explorer menu item deliberately carries no accelerator, so the keyboard
   handler was the only thing covering it, and it tested `ctrlKey` alone. Cmd+E

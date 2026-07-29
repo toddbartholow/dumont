@@ -147,10 +147,10 @@ function TitleBarImpl({ fileName, isDirty, filePath, onOpenFile, onNewFile, onFi
                             {fileName || "Dumont"}
                         </span>
                         {!fileName && (
-                            <span className="text-[var(--text-secondary)] text-xs ml-1 hidden sm:inline">— drop a .md file or Ctrl+O</span>
+                            <span className="text-[var(--text-secondary)] text-xs ml-1 hidden sm:inline">(drop a .md file or Ctrl+O)</span>
                         )}
                         {isDirty && (
-                            <span className="text-[var(--status-unsaved)] ml-1 italic text-xs">— Edited</span>
+                            <span className="text-[var(--status-unsaved)] ml-1 italic text-xs">(Edited)</span>
                         )}
                     </div>
 

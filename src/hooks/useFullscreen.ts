@@ -58,7 +58,7 @@ export function useFullscreen(notify: (message: string) => void): FullscreenCont
         wasMaximizedRef.current = await w.isMaximized();
         if (wasMaximizedRef.current) await w.unmaximize();
         await w.setFullscreen(true);
-        notify("Fullscreen on — press F11 to exit");
+        notify("Fullscreen on. Press F11 to exit");
       } else {
         await w.setFullscreen(false);
         if (wasMaximizedRef.current) await w.maximize();

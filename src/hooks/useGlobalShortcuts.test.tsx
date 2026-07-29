@@ -42,6 +42,21 @@ function press(init: KeyboardEventInit) {
     return ev;
 }
 
+// Stands in for a focused CodeMirror: dispatch from a node BELOW window whose
+// own listener preventDefaults, so the event reaches the hook's window listener
+// in the bubble phase already claimed. Dispatching straight at window cannot
+// reproduce that ordering, which is the whole thing the defaultPrevented check
+// depends on.
+function pressFromEditor(init: KeyboardEventInit) {
+    const el = document.createElement("div");
+    document.body.appendChild(el);
+    el.addEventListener("keydown", (e) => e.preventDefault());
+    const ev = new KeyboardEvent("keydown", { bubbles: true, cancelable: true, ...init });
+    el.dispatchEvent(ev);
+    el.remove();
+    return ev;
+}
+
 describe("useGlobalShortcuts", () => {
     let h: ShortcutHandlers;
     beforeEach(() => {
@@ -114,44 +129,66 @@ describe("useGlobalShortcuts gating", () => {
         expect(h.handleSaveFile).not.toHaveBeenCalled();
     });
 
-    it("Ctrl+F opens preview find only in reader mode", () => {
-        const h = makeHandlers({ mode: "preview", openPreviewFind: vi.fn() });
+    it("Ctrl+F opens find in reader mode", () => {
+        const h = makeHandlers({ mode: "preview", openFind: vi.fn() });
         render(<Harness handlers={h} />);
         press({ key: "f", ctrlKey: true });
-        expect(h.openPreviewFind).toHaveBeenCalledTimes(1);
+        expect(h.openFind).toHaveBeenCalledTimes(1);
     });
 
-    it("Ctrl+F is left to the editor in code mode", () => {
-        const h = makeHandlers({ mode: "code", openPreviewFind: vi.fn() });
+    // Code and split view too, NOT just the reader. When no editor has focus
+    // nothing else claims Mod+F, and this used to fall through to nothing: split
+    // view with the caret in the preview pane, or code mode after a dialog closed
+    // and left focus on <body>.
+    it("Ctrl+F opens find in code mode when no editor claimed the key", () => {
+        const h = makeHandlers({ mode: "code", openFind: vi.fn() });
         render(<Harness handlers={h} />);
         press({ key: "f", ctrlKey: true });
-        expect(h.openPreviewFind).not.toHaveBeenCalled();
+        expect(h.openFind).toHaveBeenCalledTimes(1);
+    });
+
+    it("Ctrl+F opens find in split mode when no editor claimed the key", () => {
+        const h = makeHandlers({ mode: "split", openFind: vi.fn() });
+        render(<Harness handlers={h} />);
+        press({ key: "f", ctrlKey: true });
+        expect(h.openFind).toHaveBeenCalledTimes(1);
+    });
+
+    // The other half of that: a focused CodeMirror preventDefaults its own Mod-f
+    // on the way up, and this listener is on window in the bubble phase, so it
+    // must read that flag and keep out. Without the check, every Mod+F in a
+    // focused editor would fire both paths.
+    it("Ctrl+F keeps out when a focused editor already claimed the key", () => {
+        const h = makeHandlers({ mode: "code", openFind: vi.fn() });
+        render(<Harness handlers={h} />);
+        pressFromEditor({ key: "f", ctrlKey: true });
+        expect(h.openFind).not.toHaveBeenCalled();
     });
 
     // The macOS half of both F shortcuts. Find is deliberately kept out of the
     // native menu, so nothing else covers Cmd here: before these, ⌘F and
     // ⌘⇧F were dead on macOS while the cheatsheet advertised them.
-    it("Cmd+F opens preview find in reader mode, and claims the key", () => {
-        const h = makeHandlers({ mode: "preview", openPreviewFind: vi.fn() });
+    it("Cmd+F opens find in reader mode, and claims the key", () => {
+        const h = makeHandlers({ mode: "preview", openFind: vi.fn() });
         render(<Harness handlers={h} />);
         const ev = press({ key: "f", metaKey: true });
-        expect(h.openPreviewFind).toHaveBeenCalledTimes(1);
+        expect(h.openFind).toHaveBeenCalledTimes(1);
         expect(ev.defaultPrevented).toBe(true);
     });
 
-    it("Cmd+F is left to the editor in code mode", () => {
-        const h = makeHandlers({ mode: "code", openPreviewFind: vi.fn() });
+    it("Cmd+F keeps out when a focused editor already claimed the key", () => {
+        const h = makeHandlers({ mode: "code", openFind: vi.fn() });
         render(<Harness handlers={h} />);
-        press({ key: "f", metaKey: true });
-        expect(h.openPreviewFind).not.toHaveBeenCalled();
+        pressFromEditor({ key: "f", metaKey: true });
+        expect(h.openFind).not.toHaveBeenCalled();
     });
 
-    // Opt+Cmd+F is the editor's replace. The reader handler must not eat it.
-    it("Opt+Cmd+F does not open preview find", () => {
-        const h = makeHandlers({ mode: "preview", openPreviewFind: vi.fn() });
+    // Opt+Cmd+F is the editor's replace. The find handler must not eat it.
+    it("Opt+Cmd+F does not open find", () => {
+        const h = makeHandlers({ mode: "preview", openFind: vi.fn() });
         render(<Harness handlers={h} />);
         press({ key: "f", metaKey: true, altKey: true });
-        expect(h.openPreviewFind).not.toHaveBeenCalled();
+        expect(h.openFind).not.toHaveBeenCalled();
     });
 
     // The File Explorer menu item carries no accelerator, so the hook is the only
@@ -237,14 +274,14 @@ describe("useGlobalShortcuts gating", () => {
         expect(h.openSearch).toHaveBeenCalledTimes(1);
     });
 
-    // The reader branch requires !shiftKey, so the shifted chord cannot reach it.
+    // The find branch requires !shiftKey, so the shifted chord cannot reach it.
     // (The early return in the cross-file branch is belt and braces, not what
     // makes this hold, so deleting that return would leave this test green.)
-    it("Cmd+Shift+F does not also open the reader find bar", () => {
-        const h = makeHandlers({ mode: "preview", openSearch: vi.fn(), openPreviewFind: vi.fn() });
+    it("Cmd+Shift+F does not also open the find bar", () => {
+        const h = makeHandlers({ mode: "preview", openSearch: vi.fn(), openFind: vi.fn() });
         render(<Harness handlers={h} />);
         press({ key: "f", metaKey: true, shiftKey: true });
-        expect(h.openPreviewFind).not.toHaveBeenCalled();
+        expect(h.openFind).not.toHaveBeenCalled();
     });
 
     it("Ctrl+Shift+H does nothing on the welcome screen", () => {

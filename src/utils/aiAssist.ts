@@ -100,11 +100,11 @@ export async function runAIAction(
         const detail = res.body.trim().slice(0, 200);
         let msg: string;
         if (res.status === 401 || res.status === 403) {
-            msg = "API key invalid or unauthorized — check Settings → AI.";
+            msg = "API key invalid or unauthorized. Check Settings → AI.";
         } else if (res.status === 404) {
-            msg = "Endpoint not found (404) — check the URL in Settings → AI.";
+            msg = "Endpoint not found (404). Check the URL in Settings → AI.";
         } else if (res.status === 429) {
-            msg = "Rate limited (429) — wait a moment and try again.";
+            msg = "Rate limited (429). Wait a moment and try again.";
         } else if (res.status >= 500) {
             msg = `AI service unavailable (${res.status}). Try again later.`;
         } else {

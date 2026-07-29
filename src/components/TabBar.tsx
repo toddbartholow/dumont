@@ -145,7 +145,7 @@ function TabBarImpl({ tabs, activeId, onSelect, onClose, onNewTab, onReorder, on
                             onClick={(e) => { e.stopPropagation(); onClose(tab.id); }}
                             tabIndex={-1}
                             aria-label={`Close ${tab.name}`}
-                            title={tab.dirty ? "Unsaved changes — click to close" : "Close"}
+                            title={tab.dirty ? "Unsaved changes. Click to close." : "Close"}
                             className="shrink-0 w-4 h-4 flex items-center justify-center rounded hover:bg-[var(--bg-hover)] text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
                         >
                             {tab.dirty && (

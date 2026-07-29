@@ -12,6 +12,9 @@ interface FindReplaceBarProps {
     /** The bar's root, so a caller closing it from outside can tell whether focus
      *  is currently inside it and therefore needs rehoming. */
     rootRef?: React.Ref<HTMLDivElement>;
+    /** Bump to refocus and select the query on an already-open bar. The VALUE is
+     *  meaningless; only that it changed matters. */
+    focusSignal?: number;
 }
 
 interface MatchResult {
@@ -28,6 +31,7 @@ export function FindReplaceBar({
     onReplace,
     onJumpTo,
     rootRef,
+    focusSignal = 0,
 }: FindReplaceBarProps) {
     const [query, setQuery] = useState("");
     const [replacement, setReplacement] = useState("");
@@ -59,6 +63,19 @@ export function FindReplaceBar({
             setMatch({ matches: [], activeIdx: -1 });
         }
     }, [isOpen, initialMode]);
+
+    // Repeat Mod-f while the bar is ALREADY open refocuses it and selects the
+    // query, the way browsers and every other editor behave. It needs its own
+    // signal because isOpen cannot express it: the keymap sets it true when it
+    // is already true, React sees no change, and the effect above never re-runs.
+    // Kept separate from that effect rather than folded into its deps, because
+    // reusing it would also re-run setShowReplace and collapse the replace field
+    // under someone who had just opened it.
+    useEffect(() => {
+        if (!isOpen) return;
+        inputRef.current?.focus();
+        inputRef.current?.select();
+    }, [focusSignal, isOpen]);
 
     // Recompute matches when query or content changes. Bail out by returning
     // `prev` when nothing changed — without this, every editor keystroke causes
