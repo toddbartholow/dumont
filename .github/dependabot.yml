@@ -7,6 +7,11 @@ version: 2
 # version as major.minor.patch, so a 0.x minor bump (breaking under Cargo and
 # caret ranges) still lands in the batch.
 #
+# Tauri is ignored on both sides. Each @tauri-apps JS package tracks the
+# major.minor of its Rust crate, but the bun and cargo groups arrive as separate
+# PRs, so either one alone would leave the two halves out of step. Bump them by
+# hand, together, in one commit.
+#
 # Dependabot SECURITY updates are switched off in the repo settings (alerts stay
 # on). Its security updater has no bun support, so it falls back to the npm
 # updater, which bumps package.json and leaves bun.lock behind: every such PR
@@ -26,6 +31,7 @@ updates:
     ignore:
       - dependency-name: "*"
         update-types: ["version-update:semver-major"]
+      - dependency-name: "@tauri-apps/*"
     groups:
       bun:
         patterns: ["*"]
@@ -40,6 +46,8 @@ updates:
     ignore:
       - dependency-name: "*"
         update-types: ["version-update:semver-major"]
+      - dependency-name: "tauri"
+      - dependency-name: "tauri-*"
     groups:
       cargo:
         patterns: ["*"]
