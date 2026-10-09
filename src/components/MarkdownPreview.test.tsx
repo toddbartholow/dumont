@@ -159,6 +159,17 @@ describe("extended markdown syntax", () => {
         // The math span must not contain a <sub> injected by supersub.
         expect(container.querySelector(".katex sub")).toBeFalsy();
     }, 15000);
+
+    // mhchem registers \ce on whichever KaTeX it imports, which is the
+    // top-level package, while rehype-katex renders with the KaTeX ITS range
+    // resolves to. A top-level bump past rehype-katex's range (Dependabot's
+    // katex 0.19 in PR #20) splits them: \ce lands on a copy nothing renders
+    // with, and every formula comes out in KaTeX's error color.
+    it("renders mhchem's \\ce through the same KaTeX that rehype-katex uses", async () => {
+        const { container } = renderPreview("Water is $\\ce{H2O}$.");
+        await waitFor(() => expect(container.querySelector(".katex")).toBeTruthy(), { timeout: 10000 });
+        expect(container.innerHTML).not.toMatch(/#cc0000|katex-error/i);
+    }, 15000);
 });
 
 // Relative .md links used to render as href="#" with the target held only in
