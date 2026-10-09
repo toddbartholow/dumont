@@ -1,0 +1,47 @@
+version: 2
+
+# Weekly version updates, one grouped PR per ecosystem. Majors stay out of the
+# groups so a breaking release arrives on its own PR. Dependabot reads every
+# version as major.minor.patch, so a 0.x minor bump (breaking under Cargo and
+# caret ranges) still lands in the batch.
+#
+# Dependabot SECURITY updates are switched off in the repo settings (alerts stay
+# on). Its security updater has no bun support, so it falls back to the npm
+# updater, which bumps package.json and leaves bun.lock behind: every such PR
+# failed `bun install --frozen-lockfile` on all four platforms (PR #2). The
+# switch is repo-wide, so cargo loses its security PRs too.
+#
+# What covers the gap: the cargo entry allows ALL dependencies, so the weekly
+# cargo PR also moves transitive crates in Cargo.lock, where most RUSTSEC
+# advisories land. Bun version updates reach direct dependencies only, so an
+# advisory in a transitive npm package shows up as an alert and needs a manual
+# bump.
+updates:
+  - package-ecosystem: "bun"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    groups:
+      bun:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+
+  - package-ecosystem: "cargo"
+    directory: "/src-tauri"
+    schedule:
+      interval: "weekly"
+    allow:
+      - dependency-type: "all"
+    groups:
+      cargo:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    groups:
+      github-actions:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
