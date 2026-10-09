@@ -1,7 +1,9 @@
 version: 2
 
-# Weekly version updates, one grouped PR per ecosystem. Majors stay out of the
-# groups so a breaking release arrives on its own PR. Dependabot reads every
+# Weekly version updates, one grouped PR per ecosystem. Major versions are
+# ignored: the first run opened a PR for every outdated major at once (mermaid,
+# jsdom, jest-dom, plugin-react, three actions), each needing real migration
+# work, so majors are taken deliberately by hand instead. Dependabot reads every
 # version as major.minor.patch, so a 0.x minor bump (breaking under Cargo and
 # caret ranges) still lands in the batch.
 #
@@ -21,6 +23,9 @@ updates:
     directory: "/"
     schedule:
       interval: "weekly"
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
     groups:
       bun:
         patterns: ["*"]
@@ -32,6 +37,9 @@ updates:
       interval: "weekly"
     allow:
       - dependency-type: "all"
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
     groups:
       cargo:
         patterns: ["*"]
@@ -41,6 +49,9 @@ updates:
     directory: "/"
     schedule:
       interval: "weekly"
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
     groups:
       github-actions:
         patterns: ["*"]
