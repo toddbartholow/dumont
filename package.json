@@ -45,7 +45,7 @@
     "jsonc-parser": "^3.3.1",
     "katex": "^0.16.47",
     "material-symbols": "^0.44.12",
-    "mermaid": "^11.16.0",
+    "mermaid": "^12.1.0",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
     "react-markdown": "^10.1.0",
