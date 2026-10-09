@@ -11,6 +11,8 @@ divider is the upstream project's changelog, retained for provenance.
 
 ## [Unreleased]
 
+## [1.1.2] - 2026-10-09
+
 ### Fixed
 
 - **A selection changed color on the line under the pointer.** Dragging across
