@@ -33,7 +33,7 @@
         "dompurify": "3.4.16",
         "jsonc-parser": "^3.3.1",
         "katex": "^0.16.47",
-        "material-symbols": "^0.44.12",
+        "material-symbols": "^0.47.6",
         "mermaid": "^11.17.2",
         "react": "^19.3.0",
         "react-dom": "^19.3.0",
@@ -65,7 +65,7 @@
         "eslint-plugin-react-refresh": "^0.5.7",
         "globals": "^17.13.0",
         "jsdom": "^29.1.1",
-        "typescript": "~5.8.3",
+        "typescript": "~5.9.3",
         "typescript-eslint": "^8.71.1",
         "vite": "^7.3.7",
         "vitest": "^3.2.7",
@@ -1082,7 +1082,7 @@
 
     "marked": ["marked@16.4.2", "", { "bin": { "marked": "bin/marked.js" } }, "sha512-TI3V8YYWvkVf3KJe1dRkpnjs68JUPyEa5vjKrp1XEEJUAOaQc+Qj+L1qWbPd0SJuAdQkFU0h73sXXqwDYxsiDA=="],
 
-    "material-symbols": ["material-symbols@0.44.12", "", {}, "sha512-lZkS9BwISNU2Jbup+IlwZrr9z1oAK6zx38qPpe7mNzkXwiIEnQaxPz1Sf3bNZ0MX15LNlJQNjKI3MWLgmo83+Q=="],
+    "material-symbols": ["material-symbols@0.47.6", "", {}, "sha512-+W09H5h13mk/+xyVAQoZPWCubIQU20QRzNlyc1Bt9gaFqWnO+P6NnexfNH2D2EXvB4kAn8A7BMhEJ8qBCNvRkQ=="],
 
     "math-intrinsics": ["math-intrinsics@1.1.0", "", {}, "sha512-/IXtbwEk5HTPyEwyKX6hGkYXxM9nbj64B+ilVJnC/R6B0pH5G4V3b0pVbL7DBj4tkhBAppbQUlf6F6Xl9LHu1g=="],
 
@@ -1404,7 +1404,7 @@
 
     "type-check": ["type-check@0.4.0", "", { "dependencies": { "prelude-ls": "^1.2.1" } }, "sha512-XleUoc9uwGXqjWwXaUTZAmzMcFZ5858QA2vvx1Ur5xIcixXIP+8LnFDgRplU30us6teqdlskFfu+ae4K79Ooew=="],
 
-    "typescript": ["typescript@5.8.3", "", { "bin": { "tsc": "bin/tsc", "tsserver": "bin/tsserver" } }, "sha512-p1diW6TqL9L07nNxvRMM7hMMw4c5XOo/1ibL4aAIGmSAt9slTE1Xgw5KWuof2uTOvCg9BY7ZRi+GaF+7sfgPeQ=="],
+    "typescript": ["typescript@5.9.3", "", { "bin": { "tsc": "bin/tsc", "tsserver": "bin/tsserver" } }, "sha512-jl1vZzPDinLr9eUt3J/t7V6FgNEw9QjvBPdysz9KfQDD41fQrC2Y4vKQdiaUpFT4bXlb1RHhLpp8wtm6M5TgSw=="],
 
     "typescript-eslint": ["typescript-eslint@8.71.1", "", { "dependencies": { "@typescript-eslint/eslint-plugin": "8.71.1", "@typescript-eslint/parser": "8.71.1", "@typescript-eslint/typescript-estree": "8.71.1", "@typescript-eslint/utils": "8.71.1" }, "peerDependencies": { "eslint": "^8.57.0 || ^9.0.0 || ^10.0.0", "typescript": ">=4.8.4 <6.1.0" } }, "sha512-oiNVPC3/NbV1FpaHU07l8O6ynqG9v4PAiW2WvTrAmZdR0f2HI/gE668ElMLCK7Xbsu5k2fK5C4fXNiq05j7/nQ=="],
 
