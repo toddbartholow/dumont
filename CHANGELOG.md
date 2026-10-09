@@ -20,6 +20,18 @@ divider is the upstream project's changelog, retained for provenance.
   selection, so it covered it. The current line is now highlighted only while
   nothing is selected, in the editor and in the settings JSON editor.
 
+### Security
+
+- **Updated the HTTP stack behind AI requests and update downloads** past two
+  Rust advisories: h2 0.4.20 for RUSTSEC-2026-0258, where a server could make
+  the connection queue empty frames without limit until it ran out of memory,
+  and rustls 0.23.45 for RUSTSEC-2026-0285, where a TLS 1.3 handshake message
+  was accepted at the wrong encryption level.
+- **Updated DOMPurify to 3.4.16**, the sanitizer behind HTML export and mermaid
+  diagrams. The fixes since 3.4.12 cover in-place sanitizing and specific hook
+  paths that neither the export nor mermaid reaches, so this is precautionary
+  rather than a fix for a reachable hole.
+
 ## [1.1.1] - 2026-07-29
 
 ### Added
