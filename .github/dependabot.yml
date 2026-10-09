@@ -12,6 +12,12 @@ version: 2
 # PRs, so either one alone would leave the two halves out of step. Bump them by
 # hand, together, in one commit.
 #
+# katex is ignored for the same kind of reason. The top-level copy supplies
+# mhchem and the stylesheet, but rehype-katex renders with the KaTeX its own
+# range allows, so a top-level bump past that range splits them and \ce{}
+# renders as an error (PR #20, katex 0.19 against rehype-katex's ^0.16). Move
+# it by hand, only to a version rehype-katex accepts.
+#
 # Dependabot SECURITY updates are switched off in the repo settings (alerts stay
 # on). Its security updater has no bun support, so it falls back to the npm
 # updater, which bumps package.json and leaves bun.lock behind: every such PR
@@ -32,6 +38,7 @@ updates:
       - dependency-name: "*"
         update-types: ["version-update:semver-major"]
       - dependency-name: "@tauri-apps/*"
+      - dependency-name: "katex"
     groups:
       bun:
         patterns: ["*"]
