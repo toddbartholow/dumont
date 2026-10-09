@@ -123,7 +123,7 @@ jobs:
   # Tag verified against github.com/google/osv-scanner-action releases; Dependabot
   # (github-actions ecosystem) will keep it current.
   osv-scan:
-    uses: google/osv-scanner-action/.github/workflows/osv-scanner-reusable.yml@9a498708959aeaef5ef730655706c5a1df1edbc2 # v2.3.8
+    uses: google/osv-scanner-action/.github/workflows/osv-scanner-reusable.yml@a345acffa64b0eaede81a3d9aae6141214d9c8fc # v2.6.0
     permissions:
       contents: read
       security-events: write
