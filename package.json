@@ -41,7 +41,7 @@
     "@tauri-apps/plugin-updater": "^2.10.1",
     "@turbodocx/html-to-docx": "^1.22.0",
     "buffer": "^6.0.3",
-    "dompurify": "3.4.12",
+    "dompurify": "3.4.13",
     "jsonc-parser": "^3.3.1",
     "katex": "^0.16.47",
     "material-symbols": "^0.44.12",
