@@ -22,12 +22,13 @@
  */
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from "react";
 import { EditorState } from "@codemirror/state";
-import { EditorView, keymap, lineNumbers, highlightActiveLine, highlightActiveLineGutter } from "@codemirror/view";
+import { EditorView, keymap, lineNumbers, highlightActiveLineGutter } from "@codemirror/view";
 import { defaultKeymap, history, historyKeymap, indentWithTab } from "@codemirror/commands";
 import { json } from "@codemirror/lang-json";
 import { syntaxHighlighting, HighlightStyle, bracketMatching, indentOnInput } from "@codemirror/language";
 import { autocompletion, closeBrackets, closeBracketsKeymap, completionKeymap } from "@codemirror/autocomplete";
 import { linter, lintGutter, lintKeymap } from "@codemirror/lint";
+import { highlightCaretLine } from "../utils/caretLine";
 import { tags as t } from "@lezer/highlight";
 import { useSettings } from "../settings/SettingsProvider";
 import { settingsCompletions, settingsLinter } from "../settings/jsonSupport";
@@ -149,7 +150,7 @@ export const SettingsJsonEditor = forwardRef<SettingsJsonHandle, Props>(function
                 doc: text || "{\n  \n}\n",
                 extensions: [
                     lineNumbers(),
-                    highlightActiveLine(),
+                    highlightCaretLine,
                     highlightActiveLineGutter(),
                     history(),
                     bracketMatching(),

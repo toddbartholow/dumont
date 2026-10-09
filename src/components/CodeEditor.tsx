@@ -7,7 +7,6 @@ import {
     EditorView,
     keymap,
     lineNumbers,
-    highlightActiveLine,
     highlightActiveLineGutter,
     drawSelection,
     dropCursor,
@@ -29,6 +28,7 @@ import {
     type EditorState,
 } from "../utils/editorActions";
 import { useSetting } from "../settings/SettingsProvider";
+import { highlightCaretLine } from "../utils/caretLine";
 import { FindReplaceBar } from "./FindReplaceBar";
 import { FormatToolbar } from "./FormatToolbar";
 import { SlashMenu, type SlashCommand } from "./SlashMenu";
@@ -530,7 +530,7 @@ function CodeEditorImpl({
                 extensions: [
                     lineNumbers(),
                     highlightActiveLineGutter(),
-                    highlightActiveLine(),
+                    highlightCaretLine,
                     historyComp.of(history()),
                     drawSelection(),
                     dropCursor(),

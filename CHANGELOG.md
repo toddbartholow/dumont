@@ -11,6 +11,15 @@ divider is the upstream project's changelog, retained for provenance.
 
 ## [Unreleased]
 
+### Fixed
+
+- **A selection changed color on the line under the pointer.** Dragging across
+  several paragraphs in the editor showed the selection color everywhere except
+  the paragraph holding the end of the selection, which turned the gray of the
+  current-line highlight. That highlight is opaque and is drawn on top of the
+  selection, so it covered it. The current line is now highlighted only while
+  nothing is selected, in the editor and in the settings JSON editor.
+
 ## [1.1.1] - 2026-07-29
 
 ### Added
