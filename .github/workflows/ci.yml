@@ -40,7 +40,7 @@ jobs:
           components: clippy
 
       - name: Rust cache
-        uses: swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        uses: swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
         # Caching is an optimization — a flaky GitHub cache service must never
         # fail the build (it took down a Windows release once).
         continue-on-error: true
