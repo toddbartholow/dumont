@@ -39,9 +39,10 @@ divider is the upstream project's changelog, retained for provenance.
 - **The title bar knows when the window is fullscreen, however it got there.**
   Entering fullscreen from the macOS View menu (⌃⌘F) left the title bar's
   square button offering Maximize, and the next fullscreen toggle did nothing
-  visible. The app now follows the window's real state on macOS and Linux. The
-  exit hint and the fullscreen notice also name ⌃⌘F on macOS instead of F11,
-  which is Show Desktop there.
+  visible. The app now follows the window's real state on macOS, and leaving
+  fullscreen no longer re-maximizes a window that was not maximized when it
+  went in. The exit hint and the fullscreen notice also name ⌃⌘F on macOS
+  instead of F11, which is Show Desktop there.
 - **Alt+Left and Alt+Right keep switching tabs after you tick a task.** A
   clicked task checkbox in the reader keeps focus on Windows, and the tab keys
   treated it as a text field and stood down. Only fields with a caret count now.

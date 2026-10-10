@@ -1,6 +1,6 @@
 import { useState, useRef, useCallback, useEffect } from "react";
 import { Window } from "@tauri-apps/api/window";
-import { IS_WINDOWS, fullscreenShortcut } from "../utils/platform";
+import { IS_MAC, fullscreenShortcut } from "../utils/platform";
 
 // Fullscreen-transition timing. The cover fades IN over FS_FADE_IN_MS (kept in
 // sync with the cover's Tailwind duration class) and we wait that long before
@@ -33,26 +33,34 @@ export interface FullscreenControls {
  * Tracking it ourselves only sees the toggles that come through here, though,
  * and on macOS fullscreen has a route that does not: the native View menu's
  * Toggle Full Screen (⌃⌘F) calls AppKit directly. That left the title bar
- * offering "Maximize" on a fullscreen window. So everywhere but Windows the
- * window's own state wins: every resize (and entering or leaving fullscreen is
- * one) re-reads isFullscreen(). Windows keeps pure self-tracking, for the reason
- * above. Tauri 2 has no fullscreen-changed event, which is why it is resize.
+ * offering "Maximize" on a fullscreen window. So on macOS the window's own
+ * state wins: every resize (and entering or leaving fullscreen is one) re-reads
+ * isFullscreen(). tao keeps that value current there, from the NSWindow
+ * delegate's will-enter and did-exit callbacks. Tauri 2 has no
+ * fullscreen-changed event, which is why it is resize.
+ *
+ * macOS only. Windows keeps pure self-tracking for the reason above, and on
+ * Linux tao's fullscreen() returns a value only set_fullscreen writes (a change
+ * made by the window manager goes to a flag it never reads), so a read there
+ * could never see an outside change anyway.
  *
  * @param notify shows the "press <key> to exit" hint when entering fullscreen.
  * @param syncFromWindow follow the window's real state; tests pass it.
  */
 export function useFullscreen(
   notify: (message: string) => void,
-  { syncFromWindow = !IS_WINDOWS }: { syncFromWindow?: boolean } = {},
+  { syncFromWindow = IS_MAC }: { syncFromWindow?: boolean } = {},
 ): FullscreenControls {
   const [isFullscreen, setIsFullscreen] = useState(false);
   const isFullscreenRef = useRef(false);
   const wasMaximizedRef = useRef(false);
-  // True while toggleFullscreen is mid-flight. The window resizes more than once
-  // during its own transition (unmaximize, then fullscreen), and a read taken
-  // between the two would flip the state back and forth; the toggle sets the
-  // final value itself when it is done.
-  const togglingRef = useRef(false);
+  // How many toggleFullscreen calls are mid-flight. The window resizes more than
+  // once during its own transition (unmaximize, then fullscreen), and a read
+  // taken between the two would flip the state back and forth; the toggle sets
+  // the final value itself when it is done. A count, not a flag: with two
+  // toggles overlapping, the first one's finally would clear a flag while the
+  // second is still resizing the window.
+  const togglesInFlightRef = useRef(0);
   // Drops an opaque cover over the webview while the window resizes. The
   // unmaximize→fullscreen step (and its reverse) physically resizes the window
   // twice, so the content visibly reflows mid-transition — a jarring "snap".
@@ -64,10 +72,10 @@ export function useFullscreen(
   const [fsTransition, setFsTransition] = useState(false);
 
   const toggleFullscreen = useCallback(async () => {
+    togglesInFlightRef.current += 1;
     try {
       const w = Window.getCurrent();
       const next = !isFullscreenRef.current;
-      togglingRef.current = true;
       // Fade the cover in, then wait for it to reach full opacity before the
       // window starts resizing underneath it. FS_FADE_IN_MS must stay in sync
       // with the cover's fade-in duration class.
@@ -87,7 +95,7 @@ export function useFullscreen(
     } catch {
       /* browser dev mode — no Tauri window */
     } finally {
-      togglingRef.current = false;
+      togglesInFlightRef.current -= 1;
       // Let the resize settle behind the fully-opaque cover, then fade out.
       window.setTimeout(() => setFsTransition(false), FS_SETTLE_MS);
     }
@@ -100,10 +108,14 @@ export function useFullscreen(
     try {
       const w = Window.getCurrent();
       w.onResized(async () => {
-        if (togglingRef.current) return;
+        if (togglesInFlightRef.current > 0) return;
         try {
           const fs = await w.isFullscreen();
-          if (cancelled || togglingRef.current) return;
+          if (cancelled || togglesInFlightRef.current > 0) return;
+          // Changed behind the hook's back. Whatever wasMaximizedRef remembers
+          // belongs to an older transition: left set, exiting through the hook
+          // would maximize a window that was never maximized.
+          if (fs !== isFullscreenRef.current) wasMaximizedRef.current = false;
           isFullscreenRef.current = fs;
           setIsFullscreen(fs);
         } catch {
