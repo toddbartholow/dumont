@@ -1,4 +1,5 @@
 import { useEffect, useRef } from "react";
+import { IS_MAC } from "../utils/platform";
 
 /** Everything the global keyboard handler needs. Kept in a ref so the window
  *  listener is attached once and never re-bound on a handler/state change. */
@@ -30,9 +31,9 @@ export interface ShortcutHandlers {
     /** Switch to the previous/next tab (Alt+Left/Right, Ctrl+Shift+Tab / Ctrl+Tab). */
     prevTab?: () => void;
     nextTab?: () => void;
-    /** Reopen the most recently closed tab (Ctrl+Shift+T). */
+    /** Reopen the most recently closed tab (Ctrl+Shift+T; Cmd+Shift+T on macOS). */
     reopenClosedTab?: () => void;
-    /** Jump to a tab by index; -1 means the last tab (Ctrl+1..9). */
+    /** Jump to a tab by index; -1 means the last tab (Ctrl+1..9; Cmd+1..9 on macOS). */
     gotoTab?: (index: number) => void;
     hasFile: boolean;
     content: string;
@@ -48,18 +49,32 @@ export interface ShortcutHandlers {
     modalOpen?: boolean;
 }
 
+/** True when the key went to something the user is typing into. */
+function isEditable(target: EventTarget | null): boolean {
+    const el = target as HTMLElement | null;
+    return !!el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable === true);
+}
+
 /**
  * App-wide keyboard shortcuts, mounted once on the window. Reads the latest
  * handlers/state through a ref so the listener never has to be torn down and
  * re-added on a keystroke (which an effect dep-array on `content` would force).
+ *
+ * `mac` defaults to the real platform; tests pass it to exercise the other one.
  */
-export function useGlobalShortcuts(handlers: ShortcutHandlers) {
+export function useGlobalShortcuts(handlers: ShortcutHandlers, { mac = IS_MAC }: { mac?: boolean } = {}) {
     const ref = useRef(handlers);
     ref.current = handlers;
 
     useEffect(() => {
         const handleKeyDown = (e: KeyboardEvent) => {
             const s = ref.current;
+            // The tab chords no menu accelerator covers (reopen, jump to N). Cmd on
+            // macOS, where the cheatsheet advertises it, and Ctrl as well there
+            // because it was the only chord that worked before. Off macOS, Meta is
+            // the Windows / Super key and belongs to the OS (Win+1 launches the
+            // first taskbar app), so only Ctrl counts. Never both held together.
+            const tabMod = mac ? e.metaKey !== e.ctrlKey : e.ctrlKey && !e.metaKey;
             // F11 - Toggle fullscreen. The universal fullscreen key on Windows
             // and Linux. macOS reserves F11 for Show Desktop, where users
             // fullscreen via the green title-bar button; the underlying Tauri
@@ -206,14 +221,23 @@ export function useGlobalShortcuts(handlers: ShortcutHandlers) {
             // Alt+Left / Alt+Right - switch to the previous/next tab. Alt (not
             // Ctrl) keeps Ctrl+Arrow free for word-wise caret movement in the
             // editor. TABS-01.
-            if (e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey && e.key === "ArrowLeft") {
+            //
+            // Only when nothing that edits text has the key. Alt+Arrow is caret
+            // movement too: word-wise on macOS (CodeMirror's standardKeymap) and
+            // syntax-wise elsewhere (its defaultKeymap's cursorSyntaxLeft), and
+            // plain inputs move by word natively. Without this one keypress moved
+            // the caret AND switched tabs. defaultPrevented is the same signal the
+            // Mod+F handler reads: a CodeMirror binding preventDefaults when its
+            // run returns true, and this listener is in the bubble phase, so it
+            // sees that. The editable-target test covers the rest: a native input
+            // moves its caret without preventDefault, and cursorSyntaxLeft returns
+            // false at the start of a document, which would otherwise let a
+            // keypress in the editor switch tabs only sometimes. Inside the editor
+            // the tab route is Ctrl+Tab / Ctrl+PageUp / Ctrl+PageDown below.
+            if (e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey && (e.key === "ArrowLeft" || e.key === "ArrowRight")) {
+                if (e.defaultPrevented || isEditable(e.target)) return;
                 e.preventDefault();
-                if (s.hasFile) s.prevTab?.();
-                return;
-            }
-            if (e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey && e.key === "ArrowRight") {
-                e.preventDefault();
-                if (s.hasFile) s.nextTab?.();
+                if (s.hasFile) (e.key === "ArrowLeft" ? s.prevTab : s.nextTab)?.();
                 return;
             }
             // Ctrl+Tab / Ctrl+Shift+Tab - cycle tabs (the browser/VS Code pair),
@@ -233,23 +257,21 @@ export function useGlobalShortcuts(handlers: ShortcutHandlers) {
                 if (s.hasFile) s.prevTab?.();
                 return;
             }
-            // Ctrl+Shift+T - reopen the most recently closed tab. TABS-15.
-            if (e.ctrlKey && e.shiftKey && !e.altKey && !e.metaKey && (e.key === "t" || e.key === "T")) {
+            // Mod+Shift+T - reopen the most recently closed tab. TABS-15.
+            if (tabMod && e.shiftKey && !e.altKey && (e.key === "t" || e.key === "T")) {
                 e.preventDefault();
                 s.reopenClosedTab?.();
                 return;
             }
-            // Ctrl+1..9 - jump to tab N (Ctrl+9 = last tab, like browsers). TABS-16.
-            if (e.ctrlKey && !e.altKey && !e.metaKey && !e.shiftKey && e.key >= "1" && e.key <= "9") {
+            // Mod+1..9 - jump to tab N (Mod+9 = last tab, like browsers). TABS-16.
+            if (tabMod && !e.altKey && !e.shiftKey && e.key >= "1" && e.key <= "9") {
                 e.preventDefault();
                 if (s.hasFile) s.gotoTab?.(e.key === "9" ? -1 : Number(e.key) - 1);
                 return;
             }
             // ? - Show cheatsheet (only when no input is focused)
             if (e.key === "?" && !e.ctrlKey && !e.metaKey && !e.altKey) {
-                const target = e.target as HTMLElement | null;
-                const isTyping = target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable);
-                if (!isTyping) {
+                if (!isEditable(e.target)) {
                     e.preventDefault();
                     s.openCheatsheet();
                 }
@@ -296,5 +318,5 @@ export function useGlobalShortcuts(handlers: ShortcutHandlers) {
             window.removeEventListener("keydown", handleKeyDown);
             window.removeEventListener("keydown", blockCtrlJ, { capture: true } as EventListenerOptions);
         };
-    }, []);
+    }, [mac]);
 }

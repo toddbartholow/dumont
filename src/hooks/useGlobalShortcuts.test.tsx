@@ -314,3 +314,105 @@ describe("useGlobalShortcuts gating", () => {
         expect(h.handleToggleBacklinks).toHaveBeenCalledTimes(1);
     });
 });
+
+// Alt+Left / Alt+Right are tab switching AND caret movement: word-wise on macOS
+// (standardKeymap's Alt-ArrowLeft), syntax-wise elsewhere (defaultKeymap's
+// cursorSyntaxLeft). One keypress used to do both.
+describe("useGlobalShortcuts Alt+Arrow tab switching", () => {
+    it("switches tabs when nothing else claimed the key", () => {
+        const h = makeHandlers({ prevTab: vi.fn(), nextTab: vi.fn() });
+        render(<Harness handlers={h} />);
+        press({ key: "ArrowLeft", altKey: true });
+        press({ key: "ArrowRight", altKey: true });
+        expect(h.prevTab).toHaveBeenCalledTimes(1);
+        expect(h.nextTab).toHaveBeenCalledTimes(1);
+    });
+
+    it("keeps out when the editor already moved the caret with it", () => {
+        const h = makeHandlers({ prevTab: vi.fn(), nextTab: vi.fn() });
+        render(<Harness handlers={h} />);
+        pressFromEditor({ key: "ArrowLeft", altKey: true });
+        pressFromEditor({ key: "ArrowRight", altKey: true });
+        expect(h.prevTab).not.toHaveBeenCalled();
+        expect(h.nextTab).not.toHaveBeenCalled();
+    });
+
+    // A plain text field moves its caret natively and never preventDefaults, so
+    // the flag alone does not cover it.
+    it("keeps out while the caret is in a text field", () => {
+        const h = makeHandlers({ prevTab: vi.fn() });
+        render(<Harness handlers={h} />);
+        const input = document.createElement("input");
+        document.body.appendChild(input);
+        input.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowLeft", altKey: true, bubbles: true, cancelable: true }));
+        input.remove();
+        expect(h.prevTab).not.toHaveBeenCalled();
+    });
+
+    it("leaves Ctrl+Tab working from inside the editor", () => {
+        const h = makeHandlers({ nextTab: vi.fn() });
+        render(<Harness handlers={h} />);
+        const el = document.createElement("div");
+        el.contentEditable = "true";
+        document.body.appendChild(el);
+        el.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", ctrlKey: true, bubbles: true, cancelable: true }));
+        el.remove();
+        expect(h.nextTab).toHaveBeenCalledTimes(1);
+    });
+});
+
+// The cheatsheet advertises Cmd for these on macOS, and no native menu item
+// covers them, so the hook is the only thing that can.
+describe("useGlobalShortcuts tab chords per platform", () => {
+    function MacHarness({ handlers, mac }: { handlers: ShortcutHandlers; mac: boolean }) {
+        useGlobalShortcuts(handlers, { mac });
+        return null;
+    }
+
+    it("Cmd+Shift+T reopens the closed tab on macOS", () => {
+        const h = makeHandlers({ reopenClosedTab: vi.fn() });
+        render(<MacHarness handlers={h} mac />);
+        const ev = press({ key: "t", metaKey: true, shiftKey: true });
+        expect(h.reopenClosedTab).toHaveBeenCalledTimes(1);
+        expect(ev.defaultPrevented).toBe(true);
+    });
+
+    it("Cmd+1..8 jump to that tab and Cmd+9 to the last, on macOS", () => {
+        const h = makeHandlers({ gotoTab: vi.fn() });
+        render(<MacHarness handlers={h} mac />);
+        press({ key: "3", metaKey: true });
+        press({ key: "9", metaKey: true });
+        expect(h.gotoTab).toHaveBeenNthCalledWith(1, 2);
+        expect(h.gotoTab).toHaveBeenNthCalledWith(2, -1);
+    });
+
+    // Ctrl was the only chord that worked on macOS before, so it keeps working.
+    it("Ctrl+Shift+T and Ctrl+1 still work on macOS", () => {
+        const h = makeHandlers({ reopenClosedTab: vi.fn(), gotoTab: vi.fn() });
+        render(<MacHarness handlers={h} mac />);
+        press({ key: "T", ctrlKey: true, shiftKey: true });
+        press({ key: "1", ctrlKey: true });
+        expect(h.reopenClosedTab).toHaveBeenCalledTimes(1);
+        expect(h.gotoTab).toHaveBeenCalledWith(0);
+    });
+
+    // The Windows / Super key is the OS's on Windows and Linux (Win+1 launches
+    // the first taskbar app), so it stays out of these there.
+    it("ignores the Meta key off macOS", () => {
+        const h = makeHandlers({ reopenClosedTab: vi.fn(), gotoTab: vi.fn() });
+        render(<MacHarness handlers={h} mac={false} />);
+        press({ key: "t", metaKey: true, shiftKey: true });
+        press({ key: "2", metaKey: true });
+        expect(h.reopenClosedTab).not.toHaveBeenCalled();
+        expect(h.gotoTab).not.toHaveBeenCalled();
+    });
+
+    it("Ctrl+Shift+T and Ctrl+1 work off macOS", () => {
+        const h = makeHandlers({ reopenClosedTab: vi.fn(), gotoTab: vi.fn() });
+        render(<MacHarness handlers={h} mac={false} />);
+        press({ key: "T", ctrlKey: true, shiftKey: true });
+        press({ key: "1", ctrlKey: true });
+        expect(h.reopenClosedTab).toHaveBeenCalledTimes(1);
+        expect(h.gotoTab).toHaveBeenCalledWith(0);
+    });
+});

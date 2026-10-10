@@ -11,6 +11,17 @@ divider is the upstream project's changelog, retained for provenance.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Option+Arrow in the editor no longer also switches tabs.** Alt+Left and
+  Alt+Right (Option on a Mac) move the caret by word in the editor, and the same
+  keypress used to switch to the neighboring tab as well. They now switch tabs
+  only when the caret is not in the editor or a text field; inside the editor,
+  Ctrl+Tab, Ctrl+Shift+Tab and Ctrl+PageUp/PageDown still do.
+- **Cmd+Shift+T and Cmd+1 to Cmd+9 work on macOS.** The shortcuts cheatsheet
+  listed them, but only the Ctrl versions did anything. Reopen closed tab and
+  jump to tab now take Cmd on macOS, and the Ctrl versions keep working.
+
 ## [1.1.3] - 2026-10-10
 
 ## [1.1.2] - 2026-10-09
