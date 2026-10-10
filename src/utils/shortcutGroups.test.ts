@@ -57,8 +57,30 @@ describe("shortcut cheatsheet filter", () => {
     const find = (mac: boolean, q: string) =>
         shortcutGroups(mac).flatMap((g) => g.items).filter((it) => matchesShortcut(it, q)).map((it) => it.description);
 
-    it.each(["shift", "cmd", "command", "ctrl+shift+s", "shift+s"])("finds Save As on macOS by %s", (q) => {
-        expect(find(true, q)).toContain("Save As…");
+    it.each(["shift", "cmd", "command", "ctrl+shift+s", "shift+s", "cmd+shift+s", "shift+cmd+s"])(
+        "finds Save As on macOS by %s",
+        (q) => {
+            expect(find(true, q)).toContain("Save As…");
+        },
+    );
+
+    it("finds Save on macOS by cmd+s", () => {
+        expect(find(true, "cmd+s")).toContain("Save");
+    });
+
+    it.each(["option+f", "option+cmd+f", "alt+cmd+f", "cmd+option+f"])("finds replace on macOS by %s", (q) => {
+        expect(find(true, q)).toContain("Find and replace");
+    });
+
+    it("finds fullscreen on macOS by ctrl+cmd+f", () => {
+        expect(find(true, "ctrl+cmd+f")).toEqual(["Toggle fullscreen"]);
+    });
+
+    // ⌃⌘F used to fold to ctrl+f, the off-macOS spelling of Find.
+    it("does not offer fullscreen for ctrl+f on macOS", () => {
+        const hits = find(true, "ctrl+f");
+        expect(hits).not.toContain("Toggle fullscreen");
+        expect(hits).toContain("Find");
     });
 
     it("finds replace on macOS by option or alt", () => {

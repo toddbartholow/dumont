@@ -10,31 +10,48 @@ export interface ShortcutGroup {
     items: Shortcut[];
 }
 
-// What each macOS glyph is called, for the cheatsheet's filter. ⌘ includes
-// "ctrl" through the off-macOS spelling built below, not here.
-const GLYPH_WORDS: [string, string][] = [
-    ["⌃", "ctrl control"],
-    ["⌥", "alt option opt"],
-    ["⇧", "shift"],
-    ["⌘", "cmd command"],
-];
+// What each macOS glyph is called, for the cheatsheet's filter.
+const GLYPH_NAMES: Record<string, string[]> = {
+    "⌃": ["ctrl", "control"],
+    "⌥": ["option", "opt", "alt"],
+    "⇧": ["shift"],
+    "⌘": ["cmd", "command"],
+};
+// The two orders people type a Mac chord in: Apple's menu order (shift+cmd+s,
+// option+cmd+f) and Cmd first (cmd+shift+s, cmd+option+f). Control leads both,
+// so ⌃⌘F never yields a chord ending "ctrl+f", which belongs to Find.
+const MAC_ORDERS = [["⌃", "⌥", "⇧", "⌘"], ["⌃", "⌘", "⌥", "⇧"]];
+
+/** Every spelling of `mods` + `key` in one order, one name per modifier. */
+function namedChords(mods: string[], key: string): string[] {
+    return mods.reduce<string[]>(
+        (heads, g) => heads.flatMap((head) => GLYPH_NAMES[g].map((name) => head + name + "+")),
+        [""],
+    ).map((head) => head + key);
+}
 
 /**
  * The text the cheatsheet filter matches a row's keys against. On macOS the
  * keys are glyphs (⇧⌘S), and nobody types ⇧ into a search box, so a glyph label
- * also matches its modifier names and its off-macOS spelling (Ctrl+Shift+S, the
- * same string shortcutLabel(chord, false) gives). A label with no glyphs is
- * matched as written.
+ * also matches its chords spelled with Mac names (cmd+shift+s, shift+cmd+s,
+ * command+shift+s) and its off-macOS spelling (Ctrl+Shift+S, the string
+ * shortcutLabel(chord, false) gives). A chord holding both ⌃ and ⌘ has no
+ * off-macOS spelling: folding both into Ctrl would make ⌃⌘F read ctrl+f. A
+ * label with no glyphs is matched as written.
  */
 export function shortcutSearchText(keys: string): string {
-    const glyphs = GLYPH_WORDS.filter(([g]) => keys.includes(g));
-    if (glyphs.length === 0) return keys.toLowerCase();
-    const key = GLYPH_WORDS.reduce((rest, [g]) => rest.split(g).join(""), keys);
     const has = (g: string) => keys.includes(g);
-    const pc = [has("⌘") || has("⌃") ? "Ctrl" : "", has("⌥") ? "Alt" : "", has("⇧") ? "Shift" : "", key]
-        .filter(Boolean)
-        .join("+");
-    return [keys, pc, ...glyphs.map(([, words]) => words)].join(" ").toLowerCase();
+    const glyphs = Object.keys(GLYPH_NAMES).filter(has);
+    if (glyphs.length === 0) return keys.toLowerCase();
+    const key = glyphs.reduce((rest, g) => rest.split(g).join(""), keys);
+    const spellings = [keys];
+    if (!(has("⌃") && has("⌘"))) {
+        spellings.push([has("⌘") || has("⌃") ? "Ctrl" : "", has("⌥") ? "Alt" : "", has("⇧") ? "Shift" : "", key]
+            .filter(Boolean)
+            .join("+"));
+    }
+    for (const order of MAC_ORDERS) spellings.push(...namedChords(order.filter(has), key));
+    return [...new Set(spellings.map((x) => x.toLowerCase()))].join(" ");
 }
 
 /** Whether a cheatsheet row matches a lowercased, trimmed filter query. */

@@ -47,9 +47,9 @@ divider is the upstream project's changelog, retained for provenance.
   clicked task checkbox in the reader keeps focus on Windows, and the tab keys
   treated it as a text field and stood down. Only fields with a caret count now.
 - **The cheatsheet filter finds macOS shortcuts by name.** With the keys shown
-  as ⌘ and ⇧, typing "shift", "cmd", "option" or "ctrl+shift+s" found nothing.
-  Each key now also matches its modifier names and its Windows and Linux
-  spelling.
+  as ⌘ and ⇧, typing "shift", "cmd+s", "option+cmd+f" or "ctrl+shift+s" found
+  nothing. Each key now also matches its chord written out with Mac modifier
+  names, in either order, and its Windows and Linux spelling.
 - **The settings file editor says its list of settings opens as you type.**
   The hint named only a key, and on a Mac that key, ⌃Space, is the default
   shortcut for switching input sources.
