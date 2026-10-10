@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi, afterEach } from "vitest";
 import { shortcutLabel, aiAssistShortcut, fullscreenShortcut, completionShortcut } from "./platform";
 
 describe("shortcutLabel", () => {
@@ -62,5 +62,45 @@ describe("platform shortcut hints", () => {
     it("completion is Ctrl+Space, Control on macOS too", () => {
         expect(completionShortcut(false)).toBe("Ctrl+Space");
         expect(completionShortcut(true)).toBe("⌃Space");
+    });
+});
+
+// IS_MAC and IS_WINDOWS are read once, at import, from navigator.platform with
+// the user agent as the fallback, so each case reloads the module under a pose.
+describe("platform detection", () => {
+    afterEach(() => {
+        delete (navigator as unknown as Record<string, unknown>).platform;
+        delete (navigator as unknown as Record<string, unknown>).userAgent;
+        vi.resetModules();
+    });
+
+    async function detect(platform: string, userAgent: string) {
+        Object.defineProperty(navigator, "platform", { value: platform, configurable: true });
+        Object.defineProperty(navigator, "userAgent", { value: userAgent, configurable: true });
+        vi.resetModules();
+        const { IS_MAC, IS_WINDOWS } = await import("./platform");
+        return { IS_MAC, IS_WINDOWS };
+    }
+
+    // jsdom's user agent on a Mac. A bare /win/ matched the "win" in darwin.
+    it("does not take darwin for Windows", async () => {
+        expect(await detect("", "Mozilla/5.0 (darwin) AppleWebKit/537.36 (KHTML, like Gecko) jsdom/26.1.0"))
+            .toEqual({ IS_MAC: false, IS_WINDOWS: false });
+    });
+
+    it.each(["Win32", "Win64"])("recognizes Windows from navigator.platform %s", async (platform) => {
+        expect((await detect(platform, "")).IS_WINDOWS).toBe(true);
+    });
+
+    it("recognizes Windows from the user agent when platform is blank", async () => {
+        expect((await detect("", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")).IS_WINDOWS).toBe(true);
+    });
+
+    it("recognizes macOS and leaves it off Windows", async () => {
+        expect(await detect("MacIntel", "")).toEqual({ IS_MAC: true, IS_WINDOWS: false });
+    });
+
+    it("leaves Linux as neither", async () => {
+        expect(await detect("Linux x86_64", "")).toEqual({ IS_MAC: false, IS_WINDOWS: false });
     });
 });

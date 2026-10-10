@@ -16,8 +16,11 @@ const ua = typeof navigator !== "undefined" ? navigator.platform || navigator.us
 /** True on macOS, where the app's Mod key hints render as ⌘. */
 export const IS_MAC = /mac|ipod|iphone|ipad/i.test(ua);
 
-/** True on Windows. Only interesting because WebView2 claims some keys there. */
-export const IS_WINDOWS = /win/i.test(ua);
+/** True on Windows. Only interesting because WebView2 claims some keys there.
+ *  Not a bare /win/: that matches "darwin", which is what jsdom's user agent
+ *  says on a Mac, and made tests behave differently by host. navigator.platform
+ *  is "Win32" (or "Win64") on Windows; the user agent says "Windows NT". */
+export const IS_WINDOWS = /\bwin(32|64|dows)\b/i.test(ua);
 
 // macOS glyphs, in the order Apple's own menus print them: ⌃⌥⇧⌘.
 const MAC_ORDER = ["Ctrl", "Alt", "Shift", "Mod"] as const;
