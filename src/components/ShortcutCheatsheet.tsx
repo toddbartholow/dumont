@@ -1,121 +1,14 @@
 import { useEffect, useRef, useState } from "react";
 import { attachFocusTrap } from "../utils/focusTrap";
-import { IS_MAC, IS_WINDOWS } from "../utils/platform";
+import { shortcutGroups } from "../utils/shortcutGroups";
 
 interface ShortcutCheatsheetProps {
     isOpen: boolean;
     onClose: () => void;
 }
 
-interface Shortcut {
-    keys: string;
-    description: string;
-}
-
-interface ShortcutGroup {
-    title: string;
-    items: Shortcut[];
-}
-
-const isMac = IS_MAC;
-const isWindows = IS_WINDOWS;
-const cmd = isMac ? "⌘" : "Ctrl";
-// On Windows, WebView2 grabs Ctrl+J for the built-in Downloads UI before
-// the page can preventDefault, so we surface Alt+J as the primary AI
-// shortcut there. macOS / Linux see Ctrl+J fine.
-const aiShortcut = isWindows ? "Alt+J" : `${cmd}+J`;
-
-const groups: ShortcutGroup[] = [
-    {
-        title: "File",
-        items: [
-            { keys: `${cmd}+O`, description: "Open file" },
-            { keys: `${cmd}+N`, description: "New file (new tab)" },
-            { keys: `${cmd}+W`, description: "Close tab" },
-            { keys: `${cmd}+S`, description: "Save" },
-            { keys: `${cmd}+Shift+S`, description: "Save As…" },
-        ],
-    },
-    {
-        title: "Tabs",
-        items: [
-            { keys: `${cmd}+N`, description: "New tab" },
-            { keys: `${cmd}+W`, description: "Close tab" },
-            { keys: `${cmd}+Shift+T`, description: "Reopen closed tab" },
-            { keys: `${cmd}+Tab`, description: "Next tab" },
-            { keys: `${cmd}+Shift+Tab`, description: "Previous tab" },
-            { keys: "Alt+←/→", description: "Previous / next tab" },
-            { keys: `${cmd}+1-8`, description: "Jump to tab N" },
-            { keys: `${cmd}+9`, description: "Jump to last tab" },
-        ],
-    },
-    {
-        title: "View",
-        items: [
-            { keys: `${cmd}+E`, description: "Toggle Reader / Code" },
-            { keys: `${cmd}+\\`, description: "Toggle split view" },
-            { keys: "F11", description: "Toggle fullscreen" },
-            { keys: `${cmd}+Shift+B`, description: "Toggle backlinks" },
-            { keys: `${cmd}+Shift+E`, description: "Toggle file explorer" },
-            // Two Find rows, because there are two find bars and they are not the
-            // same feature: the reader searches rendered text, the editor searches
-            // the source and can replace. The editor's row lives in the editor
-            // navigation group below, with its own modifier note.
-            { keys: `${cmd}+F`, description: "Find in page (reader mode)" },
-            { keys: `${cmd}+Shift+F`, description: "Search across files" },
-            { keys: `${cmd}+Shift+O`, description: "Toggle outline" },
-            { keys: `${cmd}+Shift+H`, description: "Toggle version history" },
-            { keys: `${cmd}+P`, description: "Command palette" },
-            { keys: `${cmd}+,`, description: "Open settings" },
-            { keys: "?", description: "Show this cheatsheet" },
-        ],
-    },
-    {
-        title: "AI",
-        items: [
-            { keys: aiShortcut, description: "AI assist on selection (also: the AI toolbar button, command palette)" },
-        ],
-    },
-    {
-        title: "Editor: Formatting",
-        items: [
-            { keys: `${cmd}+B`, description: "Bold (toggle)" },
-            { keys: `${cmd}+I`, description: "Italic (toggle)" },
-            { keys: `${cmd}+K`, description: "Insert link" },
-            { keys: `${cmd}+/`, description: "Toggle blockquote on line" },
-        ],
-    },
-    {
-        title: "Editor: Navigation",
-        items: [
-            { keys: "Tab", description: "Indent line / selection" },
-            { keys: "Shift+Tab", description: "Outdent line / selection" },
-            { keys: "Enter", description: "Continue list, blockquote, or task item" },
-            { keys: `${cmd}+F`, description: "Find" },
-            // NOT Cmd+H on macOS: that is Hide, and the OS matches a menu key
-            // equivalent before the editor ever sees the key. Option+Cmd+F is where
-            // mac editors put replace. Ctrl+H is still right everywhere else.
-            { keys: isMac ? "⌥⌘F" : `${cmd}+H`, description: "Find and replace" },
-        ],
-    },
-    {
-        title: "Editor: Auto-pair",
-        items: [
-            { keys: "( [ { ` \" '", description: "Wrap selection or insert pair" },
-            { keys: ") ] } ` \" '", description: "Type past matching closer" },
-            { keys: "Backspace", description: "Removes empty pair atomically" },
-        ],
-    },
-    {
-        title: "Slash & Smart Paste",
-        items: [
-            { keys: "/", description: "Slash menu (at line start)" },
-            { keys: "Paste URL on selection", description: "Wraps selection as link" },
-            { keys: "Paste rich HTML", description: "Converts to markdown" },
-            { keys: "Paste tab-separated", description: "Converts to GFM table" },
-        ],
-    },
-];
+// Built once: the platform does not change while the app runs.
+const groups = shortcutGroups();
 
 const renderKey = (k: string): React.ReactNode => {
     return k.split(/\s+/).map((part, i) => (

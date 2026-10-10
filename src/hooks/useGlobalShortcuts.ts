@@ -76,10 +76,10 @@ export function useGlobalShortcuts(handlers: ShortcutHandlers, { mac = IS_MAC }:
             // first taskbar app), so only Ctrl counts. Never both held together.
             const tabMod = mac ? e.metaKey !== e.ctrlKey : e.ctrlKey && !e.metaKey;
             // F11 - Toggle fullscreen. The universal fullscreen key on Windows
-            // and Linux. macOS reserves F11 for Show Desktop, where users
-            // fullscreen via the green title-bar button; the underlying Tauri
-            // setFullscreen drives the same window state either way. No file
-            // needed — works on the welcome screen too. FULLSCREEN-01.
+            // and Linux. macOS reserves F11 for Show Desktop, so there it is the
+            // native View menu's Toggle Full Screen (⌃⌘F, menu.rs) or the
+            // palette's Toggle fullscreen, and the cheatsheet says so. No file
+            // needed: it works on the welcome screen too. FULLSCREEN-01.
             if (e.key === "F11") {
                 e.preventDefault();
                 s.toggleFullscreen();

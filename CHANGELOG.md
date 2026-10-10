@@ -26,6 +26,12 @@ divider is the upstream project's changelog, retained for provenance.
   They now show the macOS menu form there (⌘S, ⇧⌘S) and Ctrl elsewhere. The
   split view tooltip also stops showing a doubled backslash, and the settings
   file editor no longer suggests Cmd+Space, which is Spotlight.
+- **The keyboard shortcuts cheatsheet matches what the keys do.** On macOS it
+  listed Cmd+Tab and Cmd+Shift+Tab for switching tabs (they are Ctrl+Tab and
+  Ctrl+Shift+Tab; Cmd+Tab is the app switcher) and F11 for fullscreen (F11 is
+  Show Desktop; the View menu's ⌃⌘F is the key). On Linux it listed Ctrl+J for
+  AI assist, which does nothing there; it is Alt+J. New tab and Close tab are no
+  longer listed twice.
 
 ## [1.1.3] - 2026-10-10
 
