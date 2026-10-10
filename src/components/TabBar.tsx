@@ -1,4 +1,5 @@
 import { memo, useEffect, useRef, useState } from "react";
+import { shortcutLabel } from "../utils/platform";
 
 export interface TabBarItem {
     id: string;
@@ -169,7 +170,7 @@ function TabBarImpl({ tabs, activeId, onSelect, onClose, onNewTab, onReorder, on
             <button
                 onClick={onNewTab}
                 aria-label="New tab"
-                title="New tab (Ctrl+N)"
+                title={`New tab (${shortcutLabel("Mod+N")})`}
                 className="shrink-0 flex items-center justify-center w-9 text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors"
             >
                 <span className="material-symbols-outlined text-[18px]">add</span>

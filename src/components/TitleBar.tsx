@@ -4,7 +4,7 @@ import { Window } from "@tauri-apps/api/window";
 import { SettingsMenu } from "./SettingsMenu";
 import { ExportMenu } from "./ExportMenu";
 import type { ViewMode } from "./ModeToggle";
-import { IS_MAC } from "../utils/platform";
+import { shortcutLabel } from "../utils/platform";
 
 export interface TitleBarProps {
     fileName?: string;
@@ -46,7 +46,7 @@ function TitleBarImpl({ fileName, isDirty, filePath, onOpenFile, onNewFile, onFi
     // it for a mode it does not open pointed three signals at two things, and it
     // collided with the bar's own dialog name, which IS "Find and replace".
     const findLabel = viewMode === "preview" ? "Find in page" : "Find in editor";
-    const findHint = `${findLabel} (${IS_MAC ? "⌘F" : "Ctrl+F"})`;
+    const findHint = `${findLabel} (${shortcutLabel("Mod+F")})`;
 
     const handleMinimize = async () => {
         try {
@@ -147,7 +147,7 @@ function TitleBarImpl({ fileName, isDirty, filePath, onOpenFile, onNewFile, onFi
                             {fileName || "Dumont"}
                         </span>
                         {!fileName && (
-                            <span className="text-[var(--text-secondary)] text-xs ml-1 hidden sm:inline">(drop a .md file or Ctrl+O)</span>
+                            <span className="text-[var(--text-secondary)] text-xs ml-1 hidden sm:inline">(drop a .md file or {shortcutLabel("Mod+O")})</span>
                         )}
                         {isDirty && (
                             <span className="text-[var(--status-unsaved)] ml-1 italic text-xs">(Edited)</span>
@@ -163,7 +163,7 @@ function TitleBarImpl({ fileName, isDirty, filePath, onOpenFile, onNewFile, onFi
                                     onClick={onNewFile}
                                     aria-label="New file"
                                     className="flex items-center gap-1 px-2 py-1 rounded-[var(--radius-md)] hover:bg-[var(--bg-hover)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors text-xs"
-                                    title="New File (Ctrl+N)"
+                                    title={`New File (${shortcutLabel("Mod+N")})`}
                                 >
                                     <span className="material-symbols-outlined text-[16px]">edit_note</span>
                                     <span className="hidden sm:inline">New</span>
@@ -173,7 +173,7 @@ function TitleBarImpl({ fileName, isDirty, filePath, onOpenFile, onNewFile, onFi
                                 onClick={onOpenFile}
                                 aria-label="Open file"
                                 className="flex items-center gap-1 px-2 py-1 rounded-[var(--radius-md)] hover:bg-[var(--bg-hover)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors text-xs"
-                                title="Open File (Ctrl+O)"
+                                title={`Open File (${shortcutLabel("Mod+O")})`}
                             >
                                 <span className="material-symbols-outlined text-[16px]">folder_open</span>
                                 <span className="hidden sm:inline">Open</span>

@@ -8,11 +8,9 @@ import { getRecentFiles } from "../utils/persistence";
 import { THEMES } from "../utils/appearanceOptions";
 import type { Theme } from "../context/ThemeContext";
 import type { ViewMode } from "../components/ModeToggle";
-import { IS_MAC } from "../utils/platform";
+import { aiAssistShortcut, fullscreenShortcut, shortcutLabel } from "../utils/platform";
 
 const THEME_CHOICES = THEMES;
-
-const AI_SHORTCUT = IS_MAC ? "\u2318J" : "Alt+J";
 
 /**
  * Everything the palette needs in order to describe itself.
@@ -130,7 +128,7 @@ export function usePaletteCommands(input: PaletteCommandsInput): PaletteCommand[
       items.push({
         id: "file.new",
         label: "New file",
-        hint: "Ctrl+N",
+        hint: shortcutLabel("Mod+N"),
         section: "File",
         icon: "edit_note",
         run: handleNewFile,
@@ -138,7 +136,7 @@ export function usePaletteCommands(input: PaletteCommandsInput): PaletteCommand[
       items.push({
         id: "file.open",
         label: "Open file…",
-        hint: "Ctrl+O",
+        hint: shortcutLabel("Mod+O"),
         section: "File",
         icon: "folder_open",
         run: handleOpenFile,
@@ -148,7 +146,7 @@ export function usePaletteCommands(input: PaletteCommandsInput): PaletteCommand[
         items.push({
           id: "file.save",
           label: "Save",
-          hint: "Ctrl+S",
+          hint: shortcutLabel("Mod+S"),
           section: "File",
           icon: "save",
           run: handleSaveFile,
@@ -156,7 +154,7 @@ export function usePaletteCommands(input: PaletteCommandsInput): PaletteCommand[
         items.push({
           id: "file.saveas",
           label: "Save As…",
-          hint: "Ctrl+Shift+S",
+          hint: shortcutLabel("Mod+Shift+S"),
           section: "File",
           icon: "save_as",
           run: handleSaveAs,
@@ -202,7 +200,7 @@ export function usePaletteCommands(input: PaletteCommandsInput): PaletteCommand[
         items.push({
           id: "tab.close",
           label: "Close tab",
-          hint: "Ctrl+W",
+          hint: shortcutLabel("Mod+W"),
           section: "File",
           icon: "tab_close",
           keywords: "close current tab",
@@ -215,7 +213,7 @@ export function usePaletteCommands(input: PaletteCommandsInput): PaletteCommand[
         items.push({
           id: "view.preview",
           label: "Switch to Reader mode",
-          hint: "Ctrl+E",
+          hint: shortcutLabel("Mod+E"),
           section: "View",
           icon: "visibility",
           run: () => setMode("preview"),
@@ -230,7 +228,7 @@ export function usePaletteCommands(input: PaletteCommandsInput): PaletteCommand[
         items.push({
           id: "view.split",
           label: "Toggle Split view",
-          hint: "Ctrl+\\",
+          hint: shortcutLabel("Mod+\\"),
           section: "View",
           icon: "vertical_split",
           run: handleToggleSplit,
@@ -238,7 +236,7 @@ export function usePaletteCommands(input: PaletteCommandsInput): PaletteCommand[
         items.push({
           id: "view.explorer",
           label: "Toggle file explorer",
-          hint: "Ctrl+Shift+E",
+          hint: shortcutLabel("Mod+Shift+E"),
           section: "View",
           icon: "folder",
           run: handleToggleFileExplorer,
@@ -254,7 +252,7 @@ export function usePaletteCommands(input: PaletteCommandsInput): PaletteCommand[
         items.push({
           id: "search.files",
           label: "Search in files…",
-          hint: "Ctrl+Shift+F",
+          hint: shortcutLabel("Mod+Shift+F"),
           section: "View",
           icon: "search",
           keywords: "find across folder grep global content",
@@ -263,7 +261,7 @@ export function usePaletteCommands(input: PaletteCommandsInput): PaletteCommand[
         items.push({
           id: "view.toc",
           label: "Toggle outline",
-          hint: "Ctrl+Shift+O",
+          hint: shortcutLabel("Mod+Shift+O"),
           section: "View",
           icon: "format_list_bulleted",
           run: handleToggleTOC,
@@ -271,7 +269,7 @@ export function usePaletteCommands(input: PaletteCommandsInput): PaletteCommand[
         items.push({
           id: "view.backlinks",
           label: "Toggle backlinks",
-          hint: "Ctrl+Shift+B",
+          hint: shortcutLabel("Mod+Shift+B"),
           section: "View",
           icon: "link",
           keywords: "backlinks linked mentions wikilink references incoming links",
@@ -280,7 +278,7 @@ export function usePaletteCommands(input: PaletteCommandsInput): PaletteCommand[
         items.push({
           id: "view.history",
           label: "Toggle version history",
-          hint: "Ctrl+Shift+H",
+          hint: shortcutLabel("Mod+Shift+H"),
           section: "View",
           icon: "history",
           keywords: "history versions snapshots restore revert undo previous older backup",
@@ -293,7 +291,7 @@ export function usePaletteCommands(input: PaletteCommandsInput): PaletteCommand[
       items.push({
         id: "view.fullscreen",
         label: "Toggle fullscreen",
-        hint: "F11",
+        hint: fullscreenShortcut(),
         section: "View",
         icon: "fullscreen",
         keywords: "full screen distraction free f11 immersive",
@@ -309,7 +307,7 @@ export function usePaletteCommands(input: PaletteCommandsInput): PaletteCommand[
         items.push({
           id: "ai.assist",
           label: "AI assist on selection",
-          hint: AI_SHORTCUT,
+          hint: aiAssistShortcut(),
           section: "AI",
           icon: "auto_awesome",
           keywords: "ai rewrite shorten expand continue translate assistant gpt llm",
@@ -351,7 +349,7 @@ export function usePaletteCommands(input: PaletteCommandsInput): PaletteCommand[
       items.push({
         id: "settings.open",
         label: "Preferences: Open Settings",
-        hint: "Ctrl+,",
+        hint: shortcutLabel("Mod+,"),
         section: "Toggles",
         icon: "settings",
         keywords: "preferences settings options configure",

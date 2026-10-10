@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, TauriEvent } from "@tauri-apps/api/event";
 import { clearRecentFiles, getRecentFiles, removeRecentFile, type RecentFile } from "../utils/persistence";
+import { shortcutLabel } from "../utils/platform";
 
 interface WelcomeScreenProps {
     /** The recent-file list changed here, so whoever else shows it (the native Open
@@ -176,7 +177,7 @@ export function WelcomeScreen({ onRecentsChanged, onOpenFile, onNewFile, onOpenS
                         <button
                             onClick={onOpenSettings}
                             aria-label="Settings"
-                            title="Settings (Ctrl+,)"
+                            title={`Settings (${shortcutLabel("Mod+,")})`}
                             className="btn-press flex items-center justify-center w-10 h-10 rounded-[var(--radius-md)] bg-[var(--bg-secondary)] hover:bg-[var(--bg-hover)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] border border-[var(--border)] transition-all duration-200"
                         >
                             <span className="material-symbols-outlined text-[20px]">settings</span>
@@ -200,7 +201,7 @@ export function WelcomeScreen({ onRecentsChanged, onOpenFile, onNewFile, onOpenS
                     </span>
                     <span aria-hidden="true">·</span>
                     <span className="whitespace-nowrap">
-                        press <kbd className="px-1 py-0.5 font-mono rounded border border-[var(--border)] bg-[var(--bg-secondary)] text-[var(--text-secondary)]">Ctrl+P</kbd> for commands
+                        press <kbd className="px-1 py-0.5 font-mono rounded border border-[var(--border)] bg-[var(--bg-secondary)] text-[var(--text-secondary)]">{shortcutLabel("Mod+P")}</kbd> for commands
                     </span>
                     <span aria-hidden="true">·</span>
                     <span className="whitespace-nowrap">

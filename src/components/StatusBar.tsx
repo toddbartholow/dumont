@@ -1,4 +1,5 @@
 import { memo } from "react";
+import { shortcutLabel } from "../utils/platform";
 
 interface StatusBarProps {
     isSaved: boolean;
@@ -60,7 +61,7 @@ function StatusBarImpl({
                 {/* File Explorer Toggle */}
                 <button
                     onClick={onToggleFileExplorer}
-                    title="Files (Ctrl+Shift+E)"
+                    title={`Files (${shortcutLabel("Mod+Shift+E")})`}
                     aria-label={showFileExplorer ? "Close file explorer" : "Open file explorer"}
                     aria-pressed={showFileExplorer}
                     className={`btn-press flex items-center justify-center w-8 h-6 rounded transition-colors ${showFileExplorer
@@ -76,7 +77,7 @@ function StatusBarImpl({
                 {/* TOC Toggle */}
                 <button
                     onClick={onToggleTOC}
-                    title="Table of Contents (Ctrl+Shift+O)"
+                    title={`Table of Contents (${shortcutLabel("Mod+Shift+O")})`}
                     aria-label={showTOC ? "Close table of contents" : "Open table of contents"}
                     aria-pressed={showTOC}
                     className={`btn-press flex items-center justify-center w-8 h-6 rounded transition-colors ${showTOC
@@ -92,7 +93,7 @@ function StatusBarImpl({
                 {/* Backlinks Toggle */}
                 <button
                     onClick={onToggleBacklinks}
-                    title="Backlinks (Ctrl+Shift+B)"
+                    title={`Backlinks (${shortcutLabel("Mod+Shift+B")})`}
                     aria-label={showBacklinks ? "Close backlinks" : "Open backlinks"}
                     aria-pressed={showBacklinks}
                     className={`btn-press flex items-center justify-center w-8 h-6 rounded transition-colors ${showBacklinks
@@ -108,7 +109,7 @@ function StatusBarImpl({
                 {/* Version history */}
                 <button
                     onClick={onToggleHistory}
-                    title="Version history (Ctrl+Shift+H)"
+                    title={`Version history (${shortcutLabel("Mod+Shift+H")})`}
                     aria-label={showHistory ? "Close version history" : "Open version history"}
                     aria-pressed={showHistory}
                     className={`btn-press flex items-center justify-center w-8 h-6 rounded transition-colors ${showHistory

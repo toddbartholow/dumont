@@ -21,6 +21,11 @@ divider is the upstream project's changelog, retained for provenance.
 - **Cmd+Shift+T and Cmd+1 to Cmd+9 work on macOS.** The shortcuts cheatsheet
   listed them, but only the Ctrl versions did anything. Reopen closed tab and
   jump to tab now take Cmd on macOS, and the Ctrl versions keep working.
+- **Shortcut hints name the right key on macOS.** Tooltips, the command
+  palette and the welcome screen said Ctrl for shortcuts that are Cmd on a Mac.
+  They now show the macOS menu form there (⌘S, ⇧⌘S) and Ctrl elsewhere. The
+  split view tooltip also stops showing a doubled backslash, and the settings
+  file editor no longer suggests Cmd+Space, which is Spotlight.
 
 ## [1.1.3] - 2026-10-10
 

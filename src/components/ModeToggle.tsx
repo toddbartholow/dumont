@@ -1,3 +1,5 @@
+import { shortcutLabel } from "../utils/platform";
+
 export type ViewMode = "preview" | "code" | "split";
 
 interface ModeToggleProps {
@@ -23,7 +25,7 @@ export function ModeToggle({ mode, onSetMode, aiPanelOpen }: ModeToggleProps) {
                     onClick={() => onSetMode("preview")}
                     aria-label="Reader mode"
                     aria-pressed={mode === "preview"}
-                    title="Reader (Ctrl+E)"
+                    title={`Reader (${shortcutLabel("Mod+E")})`}
                     className={`${buttonBase} ${mode === "preview"
                         ? "bg-[var(--accent)] text-[var(--accent-text)] shadow-md"
                         : "text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
@@ -37,7 +39,7 @@ export function ModeToggle({ mode, onSetMode, aiPanelOpen }: ModeToggleProps) {
                     onClick={() => onSetMode("split")}
                     aria-label="Split view"
                     aria-pressed={mode === "split"}
-                    title="Split view (Ctrl+\\)"
+                    title={`Split view (${shortcutLabel("Mod+\\")})`}
                     className={`${buttonBase} ${mode === "split"
                         ? "bg-[var(--accent)] text-[var(--accent-text)] shadow-md"
                         : "text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
@@ -51,7 +53,7 @@ export function ModeToggle({ mode, onSetMode, aiPanelOpen }: ModeToggleProps) {
                     onClick={() => onSetMode("code")}
                     aria-label="Code editor"
                     aria-pressed={mode === "code"}
-                    title="Code (Ctrl+E)"
+                    title={`Code (${shortcutLabel("Mod+E")})`}
                     className={`${buttonBase} ${mode === "code"
                         ? "bg-[var(--accent)] text-[var(--accent-text)] shadow-md"
                         : "text-[var(--text-secondary)] hover:text-[var(--text-primary)]"

@@ -1,5 +1,6 @@
 import type { EditorResult, EditorState } from "../utils/editorActions";
 import { wrapSelection, insertLink } from "../utils/editorActions";
+import { aiAssistShortcut, shortcutLabel } from "../utils/platform";
 
 interface FormatToolbarProps {
     /** Returns the current editor text + selection, or null if not mounted. */
@@ -112,24 +113,24 @@ export function FormatToolbar({ getState, apply, insert, onAIAssist }: FormatToo
             <ToolButton icon="format_h2" title="Heading 2" onClick={heading(2)} />
             <ToolButton icon="format_h3" title="Heading 3" onClick={heading(3)} />
             <Sep />
-            <ToolButton icon="format_bold" title="Bold (Ctrl+B)" onClick={wrap("**", "**", "bold")} />
-            <ToolButton icon="format_italic" title="Italic (Ctrl+I)" onClick={wrap("*", "*", "italic")} />
+            <ToolButton icon="format_bold" title={`Bold (${shortcutLabel("Mod+B")})`} onClick={wrap("**", "**", "bold")} />
+            <ToolButton icon="format_italic" title={`Italic (${shortcutLabel("Mod+I")})`} onClick={wrap("*", "*", "italic")} />
             <ToolButton icon="strikethrough_s" title="Strikethrough" onClick={wrap("~~", "~~", "text")} />
             <ToolButton icon="code" title="Inline code" onClick={wrap("`", "`", "code")} />
             <Sep />
             <ToolButton icon="format_list_bulleted" title="Bullet list" onClick={block("- ")} />
             <ToolButton icon="format_list_numbered" title="Numbered list" onClick={block("1. ")} />
             <ToolButton icon="check_box" title="Task list" onClick={block("- [ ] ")} />
-            <ToolButton icon="format_quote" title="Blockquote (Ctrl+/)" onClick={block("> ")} />
+            <ToolButton icon="format_quote" title={`Blockquote (${shortcutLabel("Mod+/")})`} onClick={block("> ")} />
             <Sep />
-            <ToolButton icon="link" title="Link (Ctrl+K)" onClick={link} />
+            <ToolButton icon="link" title={`Link (${shortcutLabel("Mod+K")})`} onClick={link} />
             <ToolButton icon="data_object" title="Code block" onClick={codeBlock} />
             <ToolButton icon="table_chart" title="Insert table" onClick={insertTable} />
             <ToolButton icon="horizontal_rule" title="Horizontal rule" onClick={insertHr} />
             {onAIAssist && (
                 <>
                     <Sep />
-                    <ToolButton icon="auto_awesome" title="AI assist (Alt+J)" onClick={onAIAssist} />
+                    <ToolButton icon="auto_awesome" title={`AI assist (${aiAssistShortcut()})`} onClick={onAIAssist} />
                 </>
             )}
         </div>

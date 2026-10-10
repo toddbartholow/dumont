@@ -32,6 +32,7 @@ import { highlightCaretLine } from "../utils/caretLine";
 import { tags as t } from "@lezer/highlight";
 import { useSettings } from "../settings/SettingsProvider";
 import { settingsCompletions, settingsLinter } from "../settings/jsonSupport";
+import { shortcutLabel } from "../utils/platform";
 
 /**
  * Every color comes from the theme's CSS variables, so the JSON editor changes
@@ -292,7 +293,7 @@ export const SettingsJsonEditor = forwardRef<SettingsJsonHandle, Props>(function
                         <span className="text-[var(--status-saved)]">Saved</span>
                     ) : (
                         <span className="text-[var(--text-secondary)]">
-                            Ctrl/Cmd+Space for the list of settings. Comments are kept.
+                            {shortcutLabel("Ctrl+Space")} for the list of settings. Comments are kept.
                         </span>
                     )}
                 </span>
