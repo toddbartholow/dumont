@@ -42,6 +42,9 @@ divider is the upstream project's changelog, retained for provenance.
   visible. The app now follows the window's real state on macOS and Linux. The
   exit hint and the fullscreen notice also name ⌃⌘F on macOS instead of F11,
   which is Show Desktop there.
+- **Alt+Left and Alt+Right keep switching tabs after you tick a task.** A
+  clicked task checkbox in the reader keeps focus on Windows, and the tab keys
+  treated it as a text field and stood down. Only fields with a caret count now.
 
 ## [1.1.3] - 2026-10-10
 

@@ -42,11 +42,12 @@ function press(init: KeyboardEventInit) {
     return ev;
 }
 
-// Reproduces the one property the hook actually reads: defaultPrevented already
-// set by the time the event bubbles to window. Dispatching straight at window
-// cannot produce that ordering. It does NOT simulate focus, which the hook never
-// reads, and it does not prove CodeMirror itself preventDefaults Mod-f, so a
-// CodeMirror change there would keep these green.
+// Reproduces defaultPrevented already set by the time the event bubbles to
+// window, which dispatching straight at window cannot. The target is a plain
+// div, so the Alt+Arrow editable-target check (the other thing the hook reads
+// from the event) stays out of it and these isolate the flag. It does not
+// simulate focus, and it does not prove CodeMirror itself preventDefaults
+// Mod-f or Alt-Arrow, so a CodeMirror change there would keep these green.
 function pressFromEditor(init: KeyboardEventInit) {
     const el = document.createElement("div");
     document.body.appendChild(el);
@@ -347,6 +348,19 @@ describe("useGlobalShortcuts Alt+Arrow tab switching", () => {
         input.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowLeft", altKey: true, bubbles: true, cancelable: true }));
         input.remove();
         expect(h.prevTab).not.toHaveBeenCalled();
+    });
+
+    // The reader's task checkboxes keep focus after a click on Windows. A
+    // checkbox has no caret, so Alt+Arrow is still tab switching there.
+    it.each(["checkbox", "radio", "button"])("still switches tabs from a focused %s input", (type) => {
+        const h = makeHandlers({ prevTab: vi.fn() });
+        render(<Harness handlers={h} />);
+        const input = document.createElement("input");
+        input.type = type;
+        document.body.appendChild(input);
+        input.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowLeft", altKey: true, bubbles: true, cancelable: true }));
+        input.remove();
+        expect(h.prevTab).toHaveBeenCalledTimes(1);
     });
 
     it("leaves Ctrl+Tab working from inside the editor", () => {

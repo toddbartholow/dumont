@@ -49,10 +49,17 @@ export interface ShortcutHandlers {
     modalOpen?: boolean;
 }
 
+// Inputs that hold no caret. A clicked checkbox keeps focus on Windows, and the
+// reader's task checkboxes are exactly that: counting them as text fields made
+// Alt+Left/Right stop switching tabs after ticking a task.
+const NON_TEXT_INPUTS = new Set(["checkbox", "radio", "button", "submit", "reset", "file", "color", "range", "image"]);
+
 /** True when the key went to something the user is typing into. */
 function isEditable(target: EventTarget | null): boolean {
     const el = target as HTMLElement | null;
-    return !!el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable === true);
+    if (!el) return false;
+    if (el.tagName === "INPUT") return !NON_TEXT_INPUTS.has((el as HTMLInputElement).type);
+    return el.tagName === "TEXTAREA" || el.isContentEditable === true;
 }
 
 /**
