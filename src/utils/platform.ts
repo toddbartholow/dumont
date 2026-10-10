@@ -60,11 +60,11 @@ export function fullscreenShortcut(mac: boolean = IS_MAC): string {
     return mac ? shortcutLabel("Ctrl+Mod+F", true) : "F11";
 }
 
-/** Open the completion list in a CodeMirror editor. Ctrl+Space everywhere, but
- *  on macOS ⌃Space is the default input-source switch and may never reach the
- *  app, so the Mac-only Alt-` binding CodeMirror's completionKeymap also carries
- *  is offered alongside it. */
+/** Open the completion list in a CodeMirror editor: Ctrl+Space, which is
+ *  Control on macOS too. CodeMirror's completionKeymap also carries a Mac-only
+ *  Alt-`, deliberately not offered: on a US layout Option+` is a dead key, the
+ *  event's key is "Dead", and CodeMirror skips its physical-key fallback for
+ *  Alt-only chords on macOS, so that binding most likely never matches. */
 export function completionShortcut(mac: boolean = IS_MAC): string {
-    const ctrlSpace = shortcutLabel("Ctrl+Space", mac);
-    return mac ? `${ctrlSpace} or ${shortcutLabel("Alt+`", true)}` : ctrlSpace;
+    return shortcutLabel("Ctrl+Space", mac);
 }

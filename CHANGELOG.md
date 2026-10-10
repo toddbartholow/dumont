@@ -50,9 +50,9 @@ divider is the upstream project's changelog, retained for provenance.
   as ⌘ and ⇧, typing "shift", "cmd", "option" or "ctrl+shift+s" found nothing.
   Each key now also matches its modifier names and its Windows and Linux
   spelling.
-- **The settings file editor names a completion key that works on macOS.**
-  ⌃Space is the Mac's input-source switch by default, so the hint now also
-  offers ⌥`, which opens the same list.
+- **The settings file editor says its list of settings opens as you type.**
+  The hint named only a key, and on a Mac that key, ⌃Space, is the default
+  shortcut for switching input sources.
 - **The built-in tutorial gives the Mac keys for bold, italic and link.** It
   said Ctrl+B, Ctrl+I and Ctrl+K. In the macOS editor Ctrl+B moves the caret
   back a character, Ctrl+K deletes to the end of the line, and Ctrl+I does

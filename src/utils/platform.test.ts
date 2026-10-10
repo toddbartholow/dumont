@@ -57,10 +57,10 @@ describe("platform shortcut hints", () => {
         expect(fullscreenShortcut(false)).toBe("F11");
     });
 
-    // ⌃Space is macOS's input-source switch by default, so the Mac also gets
-    // CodeMirror's Alt-` binding for the same command.
-    it("completion is Ctrl+Space, plus ⌥` on macOS", () => {
+    // Control on every platform, and nothing else: CodeMirror's Mac-only Alt-`
+    // binding is a dead key on a US layout and is not advertised.
+    it("completion is Ctrl+Space, Control on macOS too", () => {
         expect(completionShortcut(false)).toBe("Ctrl+Space");
-        expect(completionShortcut(true)).toBe("⌃Space or ⌥`");
+        expect(completionShortcut(true)).toBe("⌃Space");
     });
 });

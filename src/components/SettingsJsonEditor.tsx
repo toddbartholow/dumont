@@ -293,7 +293,7 @@ export const SettingsJsonEditor = forwardRef<SettingsJsonHandle, Props>(function
                         <span className="text-[var(--status-saved)]">Saved</span>
                     ) : (
                         <span className="text-[var(--text-secondary)]">
-                            {completionShortcut()} for the list of settings. Comments are kept.
+                            Start typing or press {completionShortcut()} to list settings. Comments are kept.
                         </span>
                     )}
                 </span>
