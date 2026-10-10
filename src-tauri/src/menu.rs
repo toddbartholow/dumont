@@ -160,8 +160,8 @@ pub fn build_menu(app: &AppHandle, recents: &[RecentItem]) -> tauri::Result<Menu
     // before the key ever reaches the webview, and the editor binds Mod-f (find),
     // Mod-b (bold), Mod-i (italic), Mod-h (replace) and Mod-k (link). Putting any of
     // those in a menu would take them away from the editor, silently, and the menu
-    // would be the last place anyone looked. Find stays where it is: Ctrl+F in the
-    // reader, and the editor's own keymap in the editor.
+    // would be the last place anyone looked. Find stays where it is: Ctrl/Cmd+F in
+    // the reader, and the editor's own keymap in the editor.
 
     let view_menu = SubmenuBuilder::new(app, "View")
         .item(
@@ -176,8 +176,9 @@ pub fn build_menu(app: &AppHandle, recents: &[RecentItem]) -> tauri::Result<Menu
         )
         .separator()
         .item(
-            // No accelerator: Cmd+B is the editor's bold. The app's own Ctrl+B still
-            // works, through the keyboard handler, on every platform.
+            // No accelerator, and none needed: the webview's keyboard handler takes
+            // Ctrl/Cmd+Shift+E on every platform (useGlobalShortcuts), which is the
+            // explorer's shortcut. Plain Cmd+E is Toggle Reader / Editor above.
             &MenuItemBuilder::with_id("view.explorer", "File Explorer").build(app)?,
         )
         .item(
@@ -199,7 +200,9 @@ pub fn build_menu(app: &AppHandle, recents: &[RecentItem]) -> tauri::Result<Menu
         )
         .separator()
         .item(
-            // No accelerator: Cmd+K is the editor's insert-link. Ctrl+K still opens it.
+            // No accelerator, and none needed: the webview's keyboard handler opens
+            // the palette on Ctrl/Cmd+P (and Ctrl/Cmd+Shift+P) on every platform.
+            // Cmd+K is not the palette; it is the editor's insert-link.
             &MenuItemBuilder::with_id("view.palette", "Command Palette…").build(app)?,
         )
         .separator()

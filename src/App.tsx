@@ -1590,12 +1590,18 @@ function AppContent() {
   // keystroke, so that was two IPC round trips per character, each with a brief
   // window in which no menu handler was registered at all. The codebase already
   // guards the drag-drop and CLI-file listeners against exactly this.
+  //
+  // Same handlers, so the same gates: the ones useGlobalShortcuts applies to the
+  // keyboard path. Ungated, File > Save on the welcome screen opened a Save As
+  // dialog for an empty buffer that belongs to no tab, and the View items changed
+  // state (the persisted view mode, the left panel) with nothing open to show it.
   const menuActions = useRef<Record<string, () => void>>({});
+  const canSave = hasFile || content !== "";
   menuActions.current = {
     "file.new": handleNewFile,
     "file.open": () => { void handleOpenFile(); },
-    "file.save": () => { void handleSaveFile(); },
-    "file.saveAs": () => { void handleSaveAs(); },
+    "file.save": () => { if (canSave) void handleSaveFile(); },
+    "file.saveAs": () => { if (canSave) void handleSaveAs(); },
     "file.closeTab": () => { if (activeTabIdRef.current) closeTab(activeTabIdRef.current); },
     // Clear Menu sat in the menu, enabled and clickable, and did nothing: there was
     // no entry here for its id, and `actions[id]?.()` swallowed it silently. The
@@ -1603,12 +1609,12 @@ function AppContent() {
     // missing handler for one this build emits.
     "file.recent.clear": () => { clearRecentFiles(); void pushRecentsToMenu(); },
     "app.settings": () => openSettings(),
-    "view.toggleMode": handleToggleMode,
-    "view.split": handleToggleSplit,
-    "view.explorer": handleToggleFileExplorer,
-    "view.toc": handleToggleTOC,
-    "view.backlinks": handleToggleBacklinks,
-    "view.history": handleToggleHistory,
+    "view.toggleMode": () => { if (hasFile) handleToggleMode(); },
+    "view.split": () => { if (hasFile) handleToggleSplit(); },
+    "view.explorer": () => { if (hasFile) handleToggleFileExplorer(); },
+    "view.toc": () => { if (hasFile) handleToggleTOC(); },
+    "view.backlinks": () => { if (hasFile) handleToggleBacklinks(); },
+    "view.history": () => { if (hasFile) handleToggleHistory(); },
     "view.palette": () => showModal("palette"),
     "help.shortcuts": () => showModal("cheatsheet"),
   };

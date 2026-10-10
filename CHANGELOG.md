@@ -32,6 +32,10 @@ divider is the upstream project's changelog, retained for provenance.
   Show Desktop; the View menu's ⌃⌘F is the key). On Linux it listed Ctrl+J for
   AI assist, which does nothing there; it is Alt+J. New tab and Close tab are no
   longer listed twice.
+- **The macOS menu bar does nothing on the welcome screen that the keyboard
+  would not.** File > Save opened a Save As dialog for an empty, tabless
+  buffer, and the View menu's items changed the view mode and side panel with
+  no document open. They now follow the same rules as their shortcuts.
 
 ## [1.1.3] - 2026-10-10
 

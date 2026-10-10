@@ -49,8 +49,13 @@ let nextOpenPath: string | null = null;
 let nextSavePath: string | null = null;
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: (...a: unknown[]) => invoke(...(a as [string])) }));
+/** The app's Tauri event listeners by event name, so a test can play the native menu. */
+const tauriListeners = new Map<string, (e: { payload: unknown }) => void>();
 vi.mock("@tauri-apps/api/event", () => ({
-    listen: vi.fn(async () => () => {}),
+    listen: vi.fn(async (name: string, cb: (e: { payload: unknown }) => void) => {
+        tauriListeners.set(name, cb);
+        return () => {};
+    }),
     TauriEvent: { DRAG_DROP: "drag-drop", WINDOW_CLOSE_REQUESTED: "close" },
 }));
 const win = {
@@ -75,6 +80,8 @@ vi.mock("@tauri-apps/plugin-updater", () => ({ check: vi.fn(async () => null) })
 vi.mock("@tauri-apps/plugin-process", () => ({ relaunch: vi.fn() }));
 
 const { default: App } = await import("./App");
+const dialog = await import("@tauri-apps/plugin-dialog");
+const { getSavedViewMode } = await import("./utils/persistence");
 
 beforeAll(installCodeMirrorDomPolyfills);
 
@@ -85,6 +92,7 @@ beforeEach(() => {
     invoke.mockClear();
     nextOpenPath = null;
     nextSavePath = null;
+    vi.mocked(dialog.save).mockClear();
 });
 
 // The format toolbar is off by default; the tests that need a genuinely dirty buffer use it to
@@ -184,6 +192,49 @@ describe("App", () => {
         await makeDirty();
 
         await press({ key: "s", ctrlKey: true });
+
+        await waitFor(() => expect(disk.get("/notes/a.md")).toMatch(/\*\*/));
+    });
+});
+
+/**
+ * The native menu (macOS) routes to the same handlers as the keyboard, and has to
+ * respect the same gates. It did not: File > Save on the welcome screen opened a
+ * Save As dialog for an empty buffer that belongs to no tab, and the View items
+ * flipped state (the persisted view mode among it) with nothing open.
+ */
+describe("App native menu", () => {
+    async function menu(id: string) {
+        await waitFor(() => expect(tauriListeners.has("menu")).toBe(true));
+        await act(async () => {
+            tauriListeners.get("menu")!({ payload: id });
+        });
+    }
+
+    it("File > Save and Save As do nothing on the welcome screen, like Ctrl+S", async () => {
+        boot();
+
+        await menu("file.save");
+        await menu("file.saveAs");
+
+        expect(dialog.save).not.toHaveBeenCalled();
+    });
+
+    it("View > Toggle Reader / Editor and Split View do nothing on the welcome screen", async () => {
+        boot();
+
+        await menu("view.toggleMode");
+        await menu("view.split");
+
+        expect(getSavedViewMode()).toBe("preview");
+    });
+
+    it("File > Save still saves an open file", async () => {
+        boot();
+        await openViaDialog("/notes/a.md", "# Hello\n");
+        await makeDirty();
+
+        await menu("file.save");
 
         await waitFor(() => expect(disk.get("/notes/a.md")).toMatch(/\*\*/));
     });
