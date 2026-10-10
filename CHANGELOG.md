@@ -36,6 +36,12 @@ divider is the upstream project's changelog, retained for provenance.
   would not.** File > Save opened a Save As dialog for an empty, tabless
   buffer, and the View menu's items changed the view mode and side panel with
   no document open. They now follow the same rules as their shortcuts.
+- **The title bar knows when the window is fullscreen, however it got there.**
+  Entering fullscreen from the macOS View menu (⌃⌘F) left the title bar's
+  square button offering Maximize, and the next fullscreen toggle did nothing
+  visible. The app now follows the window's real state on macOS and Linux. The
+  exit hint and the fullscreen notice also name ⌃⌘F on macOS instead of F11,
+  which is Show Desktop there.
 
 ## [1.1.3] - 2026-10-10
 

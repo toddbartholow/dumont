@@ -4,7 +4,7 @@ import { Window } from "@tauri-apps/api/window";
 import { SettingsMenu } from "./SettingsMenu";
 import { ExportMenu } from "./ExportMenu";
 import type { ViewMode } from "./ModeToggle";
-import { shortcutLabel } from "../utils/platform";
+import { fullscreenShortcut, shortcutLabel } from "../utils/platform";
 
 export interface TitleBarProps {
     fileName?: string;
@@ -232,7 +232,7 @@ function TitleBarImpl({ fileName, isDirty, filePath, onOpenFile, onNewFile, onFi
                     <button
                         onClick={handleMaximize}
                         aria-label={isFullscreen ? "Exit fullscreen" : "Maximize"}
-                        title={isFullscreen ? "Exit fullscreen (F11)" : "Maximize"}
+                        title={isFullscreen ? `Exit fullscreen (${fullscreenShortcut()})` : "Maximize"}
                         className="flex items-center justify-center w-8 h-8 rounded-lg hover:bg-[var(--bg-hover)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors"
                     >
                         <span className="material-symbols-outlined text-[16px]">{isFullscreen ? "fullscreen_exit" : "crop_square"}</span>

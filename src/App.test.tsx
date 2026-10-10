@@ -63,6 +63,7 @@ const win = {
     destroy: vi.fn(async () => {}),
     onCloseRequested: vi.fn(async () => () => {}),
     isFullscreen: vi.fn(async () => false),
+    onResized: vi.fn(async () => () => {}),
     setFullscreen: vi.fn(async () => {}),
     show: vi.fn(async () => {}),
     setFocus: vi.fn(async () => {}),

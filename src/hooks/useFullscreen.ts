@@ -1,5 +1,6 @@
-import { useState, useRef, useCallback } from "react";
+import { useState, useRef, useCallback, useEffect } from "react";
 import { Window } from "@tauri-apps/api/window";
+import { IS_WINDOWS, fullscreenShortcut } from "../utils/platform";
 
 // Fullscreen-transition timing. The cover fades IN over FS_FADE_IN_MS (kept in
 // sync with the cover's Tailwind duration class) and we wait that long before
@@ -29,12 +30,29 @@ export interface FullscreenControls {
  * unreliable values for frameless windows, so F11 "wouldn't exit"; we track the
  * state ourselves instead of querying it. FULLSCREEN-01.
  *
- * @param notify shows the "press F11 to exit" hint when entering fullscreen.
+ * Tracking it ourselves only sees the toggles that come through here, though,
+ * and on macOS fullscreen has a route that does not: the native View menu's
+ * Toggle Full Screen (⌃⌘F) calls AppKit directly. That left the title bar
+ * offering "Maximize" on a fullscreen window. So everywhere but Windows the
+ * window's own state wins: every resize (and entering or leaving fullscreen is
+ * one) re-reads isFullscreen(). Windows keeps pure self-tracking, for the reason
+ * above. Tauri 2 has no fullscreen-changed event, which is why it is resize.
+ *
+ * @param notify shows the "press <key> to exit" hint when entering fullscreen.
+ * @param syncFromWindow follow the window's real state; tests pass it.
  */
-export function useFullscreen(notify: (message: string) => void): FullscreenControls {
+export function useFullscreen(
+  notify: (message: string) => void,
+  { syncFromWindow = !IS_WINDOWS }: { syncFromWindow?: boolean } = {},
+): FullscreenControls {
   const [isFullscreen, setIsFullscreen] = useState(false);
   const isFullscreenRef = useRef(false);
   const wasMaximizedRef = useRef(false);
+  // True while toggleFullscreen is mid-flight. The window resizes more than once
+  // during its own transition (unmaximize, then fullscreen), and a read taken
+  // between the two would flip the state back and forth; the toggle sets the
+  // final value itself when it is done.
+  const togglingRef = useRef(false);
   // Drops an opaque cover over the webview while the window resizes. The
   // unmaximize→fullscreen step (and its reverse) physically resizes the window
   // twice, so the content visibly reflows mid-transition — a jarring "snap".
@@ -49,6 +67,7 @@ export function useFullscreen(notify: (message: string) => void): FullscreenCont
     try {
       const w = Window.getCurrent();
       const next = !isFullscreenRef.current;
+      togglingRef.current = true;
       // Fade the cover in, then wait for it to reach full opacity before the
       // window starts resizing underneath it. FS_FADE_IN_MS must stay in sync
       // with the cover's fade-in duration class.
@@ -58,7 +77,7 @@ export function useFullscreen(notify: (message: string) => void): FullscreenCont
         wasMaximizedRef.current = await w.isMaximized();
         if (wasMaximizedRef.current) await w.unmaximize();
         await w.setFullscreen(true);
-        notify("Fullscreen on. Press F11 to exit");
+        notify(`Fullscreen on. Press ${fullscreenShortcut()} to exit`);
       } else {
         await w.setFullscreen(false);
         if (wasMaximizedRef.current) await w.maximize();
@@ -68,10 +87,39 @@ export function useFullscreen(notify: (message: string) => void): FullscreenCont
     } catch {
       /* browser dev mode — no Tauri window */
     } finally {
+      togglingRef.current = false;
       // Let the resize settle behind the fully-opaque cover, then fade out.
       window.setTimeout(() => setFsTransition(false), FS_SETTLE_MS);
     }
   }, [notify]);
+
+  useEffect(() => {
+    if (!syncFromWindow) return;
+    let cancelled = false;
+    let unlisten: (() => void) | undefined;
+    try {
+      const w = Window.getCurrent();
+      w.onResized(async () => {
+        if (togglingRef.current) return;
+        try {
+          const fs = await w.isFullscreen();
+          if (cancelled || togglingRef.current) return;
+          isFullscreenRef.current = fs;
+          setIsFullscreen(fs);
+        } catch {
+          /* window gone mid-read */
+        }
+      })
+        .then((fn) => { if (cancelled) fn(); else unlisten = fn; })
+        .catch(() => {});
+    } catch {
+      /* browser dev mode, no Tauri window */
+    }
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
+  }, [syncFromWindow]);
 
   return { isFullscreen, fsTransition, toggleFullscreen };
 }
