@@ -52,6 +52,10 @@ divider is the upstream project's changelog, retained for provenance.
 - **The settings file editor names a completion key that works on macOS.**
   ⌃Space is the Mac's input-source switch by default, so the hint now also
   offers ⌥`, which opens the same list.
+- **The built-in tutorial gives the Mac keys for bold, italic and link.** It
+  said Ctrl+B, Ctrl+I and Ctrl+K. In the macOS editor Ctrl+B moves the caret
+  back a character, Ctrl+K deletes to the end of the line, and Ctrl+I does
+  nothing; the tutorial now names Cmd on macOS.
 
 ## [1.1.3] - 2026-10-10
 

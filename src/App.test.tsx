@@ -39,6 +39,9 @@ const invoke = vi.fn(async (cmd: string, args?: Record<string, unknown>) => {
             return [];
         case "ai_key_present":
             return false;
+        // The file explorer reads this when it opens, and a null crashes it.
+        case "list_directory_files":
+            return [];
         default:
             return null;
     }
@@ -228,6 +231,26 @@ describe("App native menu", () => {
         await menu("view.split");
 
         expect(getSavedViewMode()).toBe("preview");
+    });
+
+    // The left panel is not drawn on the welcome screen, so an ungated item would
+    // leave it toggled for the next document. Choosing it again once a file is
+    // open tells the two apart with a positive check, which matters because some
+    // panels load lazily and a "not there" check can pass before they would land:
+    // gated, the second choice opens the panel; ungated, it closes it again.
+    it.each([
+        ["view.explorer", "File explorer"],
+        ["view.toc", "Table of contents"],
+        ["view.backlinks", "Backlinks"],
+        ["view.history", "Version history"],
+    ])("%s does nothing on the welcome screen", async (id, panel) => {
+        boot();
+
+        await menu(id);
+        await openViaDialog("/notes/a.md", "# Hello\n");
+        await menu(id);
+
+        await waitFor(() => expect(document.querySelector(`aside[aria-label="${panel}"]`)).toBeTruthy());
     });
 
     it("File > Save still saves an open file", async () => {

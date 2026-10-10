@@ -24,9 +24,9 @@ heading below turn into a clickable table of contents.
 You can write **bold**, *italic*, ***both***, ~~strikethrough~~ and `inline code`
 without ever touching the mouse. A few handy shortcuts:
 
-- **Ctrl+B**: bold the selection
-- **Ctrl+I**: italic the selection
-- **Ctrl+K**: turn the selection into a link
+- **Cmd+B** on macOS, **Ctrl+B** elsewhere: bold the selection
+- **Cmd+I** on macOS, **Ctrl+I** elsewhere: italic the selection
+- **Cmd+K** on macOS, **Ctrl+K** elsewhere: turn the selection into a link
 
 > Block quotes are great for asides, callouts and citations.
 
