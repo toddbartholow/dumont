@@ -32,6 +32,18 @@ jobs:
       - name: Check for changes and bump version
         id: bump
         run: |
+          # Cargo.lock records the crate's own version too, and nothing else in
+          # this job rewrites it, so every release left it one version behind
+          # until the next local cargo command rewrote it inside an unrelated
+          # commit. Set it here and fail loudly if the entry is not found.
+          sync_cargo_lock() {
+            V="$1" perl -0pi -e 's/(\nname = "dumont"\nversion = )"[^"]*"/$1"$ENV{V}"/' src-tauri/Cargo.lock
+            if ! grep -A1 '^name = "dumont"$' src-tauri/Cargo.lock | grep -qF "version = \"$1\""; then
+              echo "Could not set dumont to $1 in src-tauri/Cargo.lock" >&2
+              exit 1
+            fi
+          }
+
           # Get current version from tauri.conf.json
           CURRENT_VERSION=$(jq -r '.version' src-tauri/tauri.conf.json)
           echo "Current version: $CURRENT_VERSION"
@@ -51,9 +63,15 @@ jobs:
             if ! grep -qF "## [$CURRENT_VERSION]" CHANGELOG.md; then
               RELEASE_DATE=$(date -u +%Y-%m-%d)
               sed -i "0,/^## \[Unreleased\]/s//## [Unreleased]\n\n## [$CURRENT_VERSION] - $RELEASE_DATE/" CHANGELOG.md
+            fi
+
+            # A hand-set version usually arrives without Cargo.lock updated.
+            sync_cargo_lock "$CURRENT_VERSION"
+
+            if ! git diff --quiet; then
               git config user.name "github-actions[bot]"
               git config user.email "github-actions[bot]@users.noreply.github.com"
-              git add CHANGELOG.md
+              git add CHANGELOG.md src-tauri/Cargo.lock
               git commit -m "chore: roll changelog for $CURRENT_VERSION [skip ci]"
               git push
             fi
@@ -92,6 +110,7 @@ jobs:
 
             # Update Cargo.toml version
             sed -i "s/^version = \"$CURRENT_VERSION\"/version = \"$NEW_VERSION\"/" src-tauri/Cargo.toml
+            sync_cargo_lock "$NEW_VERSION"
 
             # Roll the changelog: close [Unreleased] into a dated section for
             # this version and open a fresh, empty [Unreleased] above it. This
@@ -103,7 +122,7 @@ jobs:
             # Commit the version bump
             git config user.name "github-actions[bot]"
             git config user.email "github-actions[bot]@users.noreply.github.com"
-            git add src-tauri/tauri.conf.json package.json src-tauri/Cargo.toml CHANGELOG.md
+            git add src-tauri/tauri.conf.json package.json src-tauri/Cargo.toml src-tauri/Cargo.lock CHANGELOG.md
             git commit -m "chore: bump version to $NEW_VERSION [skip ci]"
             git push
 
@@ -141,9 +160,9 @@ jobs:
             printf '%s\n' "$CHANGES"
             echo ""
             echo "### Installation"
-            echo "- **Windows:** \`.msi\` (recommended) or \`.exe\` (NSIS installer)"
-            echo "- **Linux:** \`.deb\` or \`.AppImage\`"
-            echo "- **macOS:** \`.dmg\`"
+            echo "- **Windows (x64 and ARM64):** \`.msi\` (recommended) or \`.exe\` (NSIS installer)"
+            echo "- **Linux (x86_64):** \`.deb\`, \`.rpm\` or \`.AppImage\`"
+            echo "- **macOS (Apple Silicon and Intel):** \`.dmg\`"
             echo ""
             echo "See the [CHANGELOG](https://github.com/toddbartholow/Dumont/blob/main/CHANGELOG.md) for the full history."
             echo "__DUMONT_NOTES__"
