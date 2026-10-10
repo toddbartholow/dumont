@@ -59,3 +59,12 @@ export function aiAssistShortcut(mac: boolean = IS_MAC): string {
 export function fullscreenShortcut(mac: boolean = IS_MAC): string {
     return mac ? shortcutLabel("Ctrl+Mod+F", true) : "F11";
 }
+
+/** Open the completion list in a CodeMirror editor. Ctrl+Space everywhere, but
+ *  on macOS ⌃Space is the default input-source switch and may never reach the
+ *  app, so the Mac-only Alt-` binding CodeMirror's completionKeymap also carries
+ *  is offered alongside it. */
+export function completionShortcut(mac: boolean = IS_MAC): string {
+    const ctrlSpace = shortcutLabel("Ctrl+Space", mac);
+    return mac ? `${ctrlSpace} or ${shortcutLabel("Alt+`", true)}` : ctrlSpace;
+}

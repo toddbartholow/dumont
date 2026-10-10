@@ -10,6 +10,38 @@ export interface ShortcutGroup {
     items: Shortcut[];
 }
 
+// What each macOS glyph is called, for the cheatsheet's filter. ⌘ includes
+// "ctrl" through the off-macOS spelling built below, not here.
+const GLYPH_WORDS: [string, string][] = [
+    ["⌃", "ctrl control"],
+    ["⌥", "alt option opt"],
+    ["⇧", "shift"],
+    ["⌘", "cmd command"],
+];
+
+/**
+ * The text the cheatsheet filter matches a row's keys against. On macOS the
+ * keys are glyphs (⇧⌘S), and nobody types ⇧ into a search box, so a glyph label
+ * also matches its modifier names and its off-macOS spelling (Ctrl+Shift+S, the
+ * same string shortcutLabel(chord, false) gives). A label with no glyphs is
+ * matched as written.
+ */
+export function shortcutSearchText(keys: string): string {
+    const glyphs = GLYPH_WORDS.filter(([g]) => keys.includes(g));
+    if (glyphs.length === 0) return keys.toLowerCase();
+    const key = GLYPH_WORDS.reduce((rest, [g]) => rest.split(g).join(""), keys);
+    const has = (g: string) => keys.includes(g);
+    const pc = [has("⌘") || has("⌃") ? "Ctrl" : "", has("⌥") ? "Alt" : "", has("⇧") ? "Shift" : "", key]
+        .filter(Boolean)
+        .join("+");
+    return [keys, pc, ...glyphs.map(([, words]) => words)].join(" ").toLowerCase();
+}
+
+/** Whether a cheatsheet row matches a lowercased, trimmed filter query. */
+export function matchesShortcut(item: Shortcut, query: string): boolean {
+    return item.description.toLowerCase().includes(query) || shortcutSearchText(item.keys).includes(query);
+}
+
 /**
  * The cheatsheet's rows. Every one has to be true on the platform it is shown
  * on, which means naming the key the handler (useGlobalShortcuts, the editor's

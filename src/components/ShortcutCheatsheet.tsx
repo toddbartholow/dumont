@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { attachFocusTrap } from "../utils/focusTrap";
-import { shortcutGroups } from "../utils/shortcutGroups";
+import { matchesShortcut, shortcutGroups } from "../utils/shortcutGroups";
 
 interface ShortcutCheatsheetProps {
     isOpen: boolean;
@@ -52,7 +52,7 @@ export function ShortcutCheatsheet({ isOpen, onClose }: ShortcutCheatsheetProps)
         ? groups
             .map((g) => ({
                 ...g,
-                items: g.items.filter((it) => it.description.toLowerCase().includes(q) || it.keys.toLowerCase().includes(q)),
+                items: g.items.filter((it) => matchesShortcut(it, q)),
             }))
             .filter((g) => g.items.length > 0)
         : groups;

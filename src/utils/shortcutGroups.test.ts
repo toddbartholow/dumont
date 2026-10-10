@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { shortcutGroups } from "./shortcutGroups";
+import { matchesShortcut, shortcutGroups, shortcutSearchText } from "./shortcutGroups";
 
 const keysFor = (mac: boolean, description: string) =>
     shortcutGroups(mac).flatMap((g) => g.items).filter((it) => it.description === description).map((it) => it.keys);
@@ -49,5 +49,36 @@ describe("shortcut cheatsheet rows", () => {
     it("keeps replace off Cmd+H on macOS, where it is Hide", () => {
         expect(keysFor(true, "Find and replace")).toEqual(["⌥⌘F"]);
         expect(keysFor(false, "Find and replace")).toEqual(["Ctrl+H"]);
+    });
+});
+
+// On macOS the keys are glyphs, so the filter has to know their names.
+describe("shortcut cheatsheet filter", () => {
+    const find = (mac: boolean, q: string) =>
+        shortcutGroups(mac).flatMap((g) => g.items).filter((it) => matchesShortcut(it, q)).map((it) => it.description);
+
+    it.each(["shift", "cmd", "command", "ctrl+shift+s", "shift+s"])("finds Save As on macOS by %s", (q) => {
+        expect(find(true, q)).toContain("Save As…");
+    });
+
+    it("finds replace on macOS by option or alt", () => {
+        expect(find(true, "option")).toContain("Find and replace");
+        expect(find(true, "alt")).toContain("Find and replace");
+    });
+
+    it("finds tab cycling on macOS by ctrl or control", () => {
+        expect(find(true, "control")).toContain("Next tab");
+        expect(find(true, "ctrl+tab")).toContain("Next tab");
+    });
+
+    it("still matches the spelled-out keys off macOS", () => {
+        expect(find(false, "ctrl+shift+s")).toContain("Save As…");
+        expect(find(false, "cmd")).toEqual([]);
+    });
+
+    it("spells a glyph label the off-macOS way", () => {
+        expect(shortcutSearchText("⇧⌘S")).toContain("ctrl+shift+s");
+        expect(shortcutSearchText("⌥←/→")).toContain("alt+←/→");
+        expect(shortcutSearchText("Ctrl+Tab")).toBe("ctrl+tab");
     });
 });

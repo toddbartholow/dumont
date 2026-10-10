@@ -45,6 +45,13 @@ divider is the upstream project's changelog, retained for provenance.
 - **Alt+Left and Alt+Right keep switching tabs after you tick a task.** A
   clicked task checkbox in the reader keeps focus on Windows, and the tab keys
   treated it as a text field and stood down. Only fields with a caret count now.
+- **The cheatsheet filter finds macOS shortcuts by name.** With the keys shown
+  as ⌘ and ⇧, typing "shift", "cmd", "option" or "ctrl+shift+s" found nothing.
+  Each key now also matches its modifier names and its Windows and Linux
+  spelling.
+- **The settings file editor names a completion key that works on macOS.**
+  ⌃Space is the Mac's input-source switch by default, so the hint now also
+  offers ⌥`, which opens the same list.
 
 ## [1.1.3] - 2026-10-10
 

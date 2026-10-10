@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { shortcutLabel, aiAssistShortcut, fullscreenShortcut } from "./platform";
+import { shortcutLabel, aiAssistShortcut, fullscreenShortcut, completionShortcut } from "./platform";
 
 describe("shortcutLabel", () => {
     it("spells Mod as Ctrl off macOS", () => {
@@ -55,5 +55,12 @@ describe("platform shortcut hints", () => {
     it("fullscreen is the View menu's ⌃⌘F on macOS and F11 elsewhere", () => {
         expect(fullscreenShortcut(true)).toBe("⌃⌘F");
         expect(fullscreenShortcut(false)).toBe("F11");
+    });
+
+    // ⌃Space is macOS's input-source switch by default, so the Mac also gets
+    // CodeMirror's Alt-` binding for the same command.
+    it("completion is Ctrl+Space, plus ⌥` on macOS", () => {
+        expect(completionShortcut(false)).toBe("Ctrl+Space");
+        expect(completionShortcut(true)).toBe("⌃Space or ⌥`");
     });
 });
