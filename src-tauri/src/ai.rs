@@ -248,46 +248,62 @@ pub async fn ai_request(
         }
     };
 
+    let request = run_request(
+        &endpoint,
+        api_key,
+        body,
+        connect_timeout_ms,
+        total_timeout_ms,
+        idle_timeout_ms,
+        |event| {
+            let _ = channel.send(event);
+        },
+    );
+    run_cancellable(&state, id, request).await
+}
+
+/// Run `request` under cancellation handle `id`, so `cancel(id)` can end it.
+/// Split out of `ai_request` so the tests can drive it without a Tauri `State`.
+async fn run_cancellable(
+    cancels: &AiCancel,
+    id: u32,
+    request: impl std::future::Future<Output = Result<(), String>>,
+) -> Result<(), String> {
     let (cancel_tx, cancel_rx) = tokio::sync::oneshot::channel::<()>();
-    state.0.lock().unwrap().insert(id, cancel_tx);
+    cancels.0.lock().unwrap().insert(id, cancel_tx);
 
     // "cancelled" is a contract with the frontend transport: it maps exactly
     // that string to an AbortError so a user cancel isn't shown as a failure.
     let result = tokio::select! {
         _ = cancel_rx => Err("cancelled".to_string()),
-        r = run_request(
-            &endpoint,
-            api_key,
-            body,
-            connect_timeout_ms,
-            total_timeout_ms,
-            idle_timeout_ms,
-            |event| {
-                let _ = channel.send(event);
-            },
-        ) => r,
+        r = request => r,
     };
 
     // Single removal point: the select above is the only way out of the
     // request, so this covers success, error, timeout, and cancellation.
-    state.0.lock().unwrap().remove(&id);
+    cancels.0.lock().unwrap().remove(&id);
     result
+}
+
+/// Fire the cancellation handle for `id`, if that request is still running.
+fn cancel(cancels: &AiCancel, id: u32) {
+    // A missing id just means the request already finished — races are fine.
+    if let Some(tx) = cancels.0.lock().unwrap().remove(&id) {
+        let _ = tx.send(());
+    }
 }
 
 #[tauri::command]
 pub async fn ai_cancel(state: tauri::State<'_, AiCancel>, id: u32) -> Result<(), String> {
-    // A missing id just means the request already finished — races are fine.
-    if let Some(tx) = state.0.lock().unwrap().remove(&id) {
-        let _ = tx.send(());
-    }
+    cancel(&state, id);
     Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        flush_remainder, pump, run_request, take_complete_lines, AiEvent, MAX_BODY_BYTES,
-        MAX_ERROR_BODY_BYTES, MAX_LINE_BYTES, STALLED,
+        cancel, flush_remainder, pump, run_cancellable, run_request, take_complete_lines, AiCancel,
+        AiEvent, MAX_BODY_BYTES, MAX_ERROR_BODY_BYTES, MAX_LINE_BYTES, STALLED,
     };
     use futures_util::{stream, StreamExt};
     use std::time::Duration;
@@ -502,5 +518,81 @@ mod tests {
         );
         assert!(buf.is_empty());
         assert_eq!(flush_remainder(&mut buf), None);
+    }
+
+    /// Serve the headers and one SSE line, then hold the connection open without a
+    /// further byte: a generation still in progress, as far as the client can tell.
+    async fn serve_then_hang() -> String {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let (mut sock, _) = listener.accept().await.unwrap();
+            let mut req = [0u8; 4096];
+            let _ = sock.read(&mut req).await;
+            let _ = sock.write_all(&http("200 OK", b"data: first\n")).await;
+            let _ = sock.flush().await;
+            tokio::time::sleep(Duration::from_secs(60)).await;
+            drop(sock);
+        });
+        format!("http://{addr}/v1/chat/completions")
+    }
+
+    // The Stop button. A real request mid-stream is ended by cancel(), promptly and with
+    // the exact "cancelled" the frontend turns into an AbortError, and its handle is gone
+    // afterwards so a second cancel is a no-op.
+    #[test]
+    fn cancel_ends_a_request_mid_stream() {
+        let cancels = AiCancel::default();
+        let mut events = Vec::new();
+        let started = std::time::Instant::now();
+        let r = block_on(async {
+            let endpoint = serve_then_hang().await;
+            // No idle timeout: only the cancel can end this request.
+            let request = run_request(&endpoint, None, "{}".into(), 5_000, None, None, |e| {
+                // Stop as soon as the first line is in, as a user would mid-reply.
+                if matches!(e, AiEvent::Chunk { .. }) {
+                    cancel(&cancels, 7);
+                }
+                events.push(e);
+            });
+            run_cancellable(&cancels, 7, request).await
+        });
+        assert_eq!(r, Err("cancelled".to_string()));
+        assert!(started.elapsed() < Duration::from_secs(10));
+        assert!(events.iter().any(|e| matches!(e, AiEvent::Chunk { .. })));
+        assert!(!events.iter().any(|e| matches!(e, AiEvent::Done)));
+        assert!(cancels.0.lock().unwrap().is_empty());
+        cancel(&cancels, 7);
+    }
+
+    #[test]
+    fn a_finished_request_leaves_no_handle_and_ignores_a_late_cancel() {
+        let cancels = AiCancel::default();
+        let r = block_on(run_cancellable(&cancels, 3, async { Ok(()) }));
+        assert_eq!(r, Ok(()));
+        assert!(cancels.0.lock().unwrap().is_empty());
+        // The frontend's abort can lose the race with the response; that is not an error.
+        cancel(&cancels, 3);
+    }
+
+    // Cancelling one request leaves another running.
+    #[test]
+    fn cancel_ends_only_the_request_it_names() {
+        let cancels = AiCancel::default();
+        let (a, b) = block_on(async {
+            let slow = async {
+                tokio::time::sleep(Duration::from_millis(200)).await;
+                Ok(())
+            };
+            let named = async {
+                tokio::time::sleep(Duration::from_millis(20)).await;
+                cancel(&cancels, 1);
+                tokio::time::sleep(Duration::from_secs(60)).await;
+                Ok(())
+            };
+            tokio::join!(run_cancellable(&cancels, 1, named), run_cancellable(&cancels, 2, slow))
+        });
+        assert_eq!(a, Err("cancelled".to_string()));
+        assert_eq!(b, Ok(()));
     }
 }

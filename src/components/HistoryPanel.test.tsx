@@ -207,4 +207,33 @@ describe("HistoryPanel", () => {
     await waitFor(() => expect(onError).toHaveBeenCalledWith("Could not read that snapshot"));
     expect(onPreview).not.toHaveBeenCalled();
   });
+  // The listing is held open here, not answered at once, so the order the answers land in
+  // is the test's to choose. A slow listing of the file just left, landing last, used to
+  // be able to fill the panel; and the actions on its rows act on the file now open.
+  it("ignores a listing of the previous file that lands after the current one", async () => {
+    const OTHER = "/notes/other.md";
+    const held = new Map<string, (s: SnapshotMeta[]) => void>();
+    mockInvoke.mockImplementation((cmd: string, args: Record<string, unknown>) => {
+      if (cmd === "list_snapshots") {
+        return new Promise((resolve) => held.set(args.path as string, resolve));
+      }
+      if (cmd === "read_snapshot") return Promise.resolve(`content of ${args.path} ${args.id}`);
+      return Promise.resolve(null);
+    });
+    const onPreview = vi.fn();
+    const { rerender } = render(<HistoryPanel {...props({ onPreview })} />);
+    await waitFor(() => expect(held.has(FILE)).toBe(true));
+    rerender(<HistoryPanel {...props({ onPreview, filePath: OTHER })} />);
+    await waitFor(() => expect(held.has(OTHER)).toBe(true));
+
+    held.get(OTHER)!([{ id: "9", timestamp: NOW - 5 * 60_000, bytes: 100 }]);
+    await waitFor(() => expect(screen.getByText("5 minutes ago")).toBeInTheDocument());
+    held.get(FILE)!(snapshots);
+    // Give the late answer every chance to land.
+    await new Promise((r) => setTimeout(r, 20));
+
+    expect(screen.queryByText("30 minutes ago")).toBeNull();
+    fireEvent.click(row("5 minutes ago"));
+    await waitFor(() => expect(mockInvoke).toHaveBeenCalledWith("read_snapshot", { path: OTHER, id: "9" }));
+  });
 });

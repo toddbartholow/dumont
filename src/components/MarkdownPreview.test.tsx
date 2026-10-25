@@ -8,6 +8,7 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { render, cleanup, waitFor } from "@testing-library/react";
 import { MarkdownPreview } from "./MarkdownPreview";
+import { invoke } from "@tauri-apps/api/core";
 
 vi.mock("@tauri-apps/api/core", () => ({
     invoke: vi.fn(async () => null),
@@ -191,5 +192,36 @@ describe("relative markdown links", () => {
         expect(onNavigateRelative).toHaveBeenCalledWith("notes/other.md");
         // preventDefault must fire or the webview would navigate to the .md URL.
         expect(click.defaultPrevented).toBe(true);
+    });
+});
+
+// A local image is read through Rust, and the read takes time. Change the image while one is
+// still loading and the old read must not land on the new one.
+describe("local images", () => {
+    it("shows the current image when an earlier read lands after it", async () => {
+        const held = new Map<string, () => void>();
+        vi.mocked(invoke).mockImplementation(((cmd: string, args: { relPath?: string }) => {
+            if (cmd !== "read_image_file") return Promise.resolve(null);
+            return new Promise<unknown>((resolve) => held.set(args.relPath!, () => resolve(new ArrayBuffer(4))));
+        }) as typeof invoke);
+        // jsdom has no object URLs. Number them in the order they are made, which is the
+        // order the reads are released in below.
+        let made = 0;
+        const created = vi.fn(() => `blob:${++made}`);
+        Object.assign(URL, { createObjectURL: created, revokeObjectURL: vi.fn() });
+
+        const { container, rerender } = renderPreview("![pic](late-first.png)", { filePath: "/notes/doc.md" });
+        await waitFor(() => expect(held.has("late-first.png")).toBe(true));
+        rerender(
+            <MarkdownPreview content="![pic](on-time.png)" fileName="test.md" fileSize={20} onEditClick={() => {}} filePath="/notes/doc.md" />,
+        );
+        await waitFor(() => expect(held.has("on-time.png")).toBe(true));
+
+        held.get("on-time.png")!(); // becomes blob:1
+        await waitFor(() => expect(container.querySelector("img")?.getAttribute("src")).toBe("blob:1"));
+        held.get("late-first.png")!(); // becomes blob:2, and must not be shown
+        await waitFor(() => expect(created).toHaveBeenCalledTimes(2));
+
+        expect(container.querySelector("img")?.getAttribute("src")).toBe("blob:1");
     });
 });
