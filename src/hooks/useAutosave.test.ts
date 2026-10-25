@@ -95,4 +95,29 @@ describe("useAutosave", () => {
     await vi.advanceTimersByTimeAsync(1600);
     expect(onError).toHaveBeenCalledTimes(1);
   });
+
+  // EXT-03: an autosave is the one write the user never chose, so it checks the disk first.
+  it("passes the known mtime, so the write is refused if the file moved on disk", async () => {
+    renderHook((p: UseAutosaveOptions) => useAutosave(p), { initialProps: base({ getKnownMtime: () => 42 }) });
+    await vi.advanceTimersByTimeAsync(1600);
+    expect(invoke).toHaveBeenCalledWith("save_file", { path: "C:/doc.md", content: "new", expectedMtime: 42 });
+  });
+
+  it("reports a refused write as a conflict, not an error", async () => {
+    (invoke as Mock).mockRejectedValue("File changed on disk: C:/doc.md");
+    const onError = vi.fn();
+    const onConflict = vi.fn();
+    renderHook((p: UseAutosaveOptions) => useAutosave(p), {
+      initialProps: base({ getKnownMtime: () => 42, documentId: "tab-1", onError, onConflict }),
+    });
+    await vi.advanceTimersByTimeAsync(1600);
+    expect(onConflict).toHaveBeenCalledWith("tab-1");
+    expect(onError).not.toHaveBeenCalled();
+  });
+
+  it("does not save a conflicted document, even when dirty", async () => {
+    renderHook((p: UseAutosaveOptions) => useAutosave(p), { initialProps: base({ isConflicted: true }) });
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(invoke).not.toHaveBeenCalled();
+  });
 });

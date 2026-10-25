@@ -55,6 +55,11 @@ const invoke = vi.fn(async (cmd: string, args?: Record<string, unknown>) => {
         case "save_file":
             // A test can hold every write open here, to act while it is in flight.
             if (saveGate) await saveGate;
+            // As save_file does: refuse when the file is not at the mtime the caller last saw.
+            // Rejected with the bare message, which is how a CommandError crosses the bridge.
+            if (args?.expectedMtime !== undefined && disk.has(path) && args.expectedMtime !== (mtimes.get(path) ?? 1)) {
+                throw `File changed on disk: ${path}`;
+            }
             disk.set(path, args?.content as string);
             mtimes.set(path, (mtimes.get(path) ?? 1) + 1);
             return mtimes.get(path)!;
@@ -473,5 +478,121 @@ describe("App external reload", () => {
         const editor = document.querySelector(".cm-content")!;
         expect(editor.textContent).toMatch(/\*\*/);
         expect(editor.textContent).not.toMatch(/another editor/);
+    });
+});
+
+/**
+ * A file another program changed while the buffer holds edits of its own is a conflict, and the
+ * user decides it. Autosave used to decide it for them, by writing over the other change: after
+ * a toast saying a save WOULD overwrite, or with no warning at all when the window kept focus.
+ * EXT-03.
+ */
+describe("App external conflict", () => {
+    const THEIRS = "# A, from another editor\n";
+    const changeOnDisk = (path: string, text: string) => {
+        disk.set(path, text);
+        mtimes.set(path, (mtimes.get(path) ?? 1) + 10);
+    };
+    const focusWindow = () =>
+        act(async () => {
+            window.dispatchEvent(new Event("focus"));
+        });
+    const switchTo = (name: RegExp) =>
+        act(async () => {
+            fireEvent.mouseDown(screen.getAllByRole("tab").find((t) => name.test(t.textContent ?? ""))!, { button: 0 });
+        });
+    const bootAutosaving = () =>
+        render(
+            <TestProviders settings={{ "editor.toolbar": true, "files.autoSave": true }}>
+                <App />
+            </TestProviders>,
+        );
+    // Comfortably past the 1.5 s autosave debounce.
+    const waitPastAutosave = () => act(() => new Promise<void>((r) => setTimeout(r, 2200)));
+    const keepMine = () => screen.findByRole("button", { name: "Keep my version" }, { timeout: 4000 });
+
+    it("autosave does not overwrite a change made while the window kept focus", async () => {
+        bootAutosaving();
+        await openViaDialog("/notes/a.md", "# A\n");
+        await makeDirty();
+        changeOnDisk("/notes/a.md", THEIRS);
+
+        expect(await keepMine()).toBeTruthy();
+        expect(disk.get("/notes/a.md")).toBe(THEIRS);
+        // The edits are still in the buffer, waiting on the choice.
+        expect(document.querySelector(".cm-content")!.textContent).toMatch(/\*\*/);
+    });
+
+    it("a change seen on focus parks autosave until the user chooses", async () => {
+        bootAutosaving();
+        await openViaDialog("/notes/a.md", "# A\n");
+        changeOnDisk("/notes/a.md", THEIRS);
+        await makeDirty();
+        await focusWindow();
+
+        expect(await keepMine()).toBeTruthy();
+        await waitPastAutosave();
+        expect(disk.get("/notes/a.md")).toBe(THEIRS);
+    });
+
+    it("Keep my version writes the buffer over the other change", async () => {
+        bootAutosaving();
+        await openViaDialog("/notes/a.md", "# A\n");
+        await makeDirty();
+        changeOnDisk("/notes/a.md", THEIRS);
+
+        fireEvent.click(await keepMine());
+
+        await waitFor(() => expect(disk.get("/notes/a.md")).toMatch(/\*\*/));
+        await waitFor(() => expect(screen.queryByRole("button", { name: "Keep my version" })).toBeNull());
+        expect(screen.queryByLabelText("File has unsaved changes")).toBeNull();
+    });
+
+    it("Reload from disk takes the other change and drops the edits", async () => {
+        bootAutosaving();
+        await openViaDialog("/notes/a.md", "# A\n");
+        await makeDirty();
+        changeOnDisk("/notes/a.md", THEIRS);
+        await keepMine();
+
+        fireEvent.click(screen.getByRole("button", { name: "Reload from disk" }));
+
+        await waitFor(() => expect(document.querySelector(".cm-content")!.textContent).toMatch(/another editor/));
+        expect(document.querySelector(".cm-content")!.textContent).not.toMatch(/\*\*/);
+        expect(screen.queryByRole("button", { name: "Keep my version" })).toBeNull();
+        expect(disk.get("/notes/a.md")).toBe(THEIRS);
+    });
+
+    it("Ctrl+S does not overwrite a change it has not seen, and then asks", async () => {
+        boot();
+        await openViaDialog("/notes/a.md", "# A\n");
+        await makeDirty();
+        changeOnDisk("/notes/a.md", THEIRS);
+
+        await press({ key: "s", ctrlKey: true });
+
+        expect(await keepMine()).toBeTruthy();
+        expect(disk.get("/notes/a.md")).toBe(THEIRS);
+        // Pressed again, it takes the user to the choice rather than writing.
+        await press({ key: "s", ctrlKey: true });
+        await waitFor(() => expect(document.activeElement).toBe(screen.getByRole("button", { name: "Reload from disk" })));
+        expect(disk.get("/notes/a.md")).toBe(THEIRS);
+    });
+
+    it("a background tab's autosave does not overwrite a change to its file", async () => {
+        bootAutosaving();
+        await openViaDialog("/notes/a.md", "# A\n");
+        await openViaDialog("/notes/b.md", "# B\n");
+        await switchTo(/a\.md/);
+        await makeDirty();
+        await switchTo(/b\.md/);
+        changeOnDisk("/notes/a.md", THEIRS);
+
+        expect(await screen.findByText(/background tab/i, {}, { timeout: 4000 })).toBeTruthy();
+        expect(disk.get("/notes/a.md")).toBe(THEIRS);
+        // The choice is waiting on the tab itself.
+        await switchTo(/a\.md/);
+        expect(await keepMine()).toBeTruthy();
+        expect(document.querySelector(".cm-content")!.textContent).toMatch(/\*\*/);
     });
 });

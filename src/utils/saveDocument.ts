@@ -32,14 +32,28 @@ import { recordSnapshot } from "./history";
  * unsaved-changes dialog, would be the one version reliably missing from its own
  * history. Nothing is racing the user for latency at that point, because the app is
  * quitting, so it is worth the round trip. It still cannot fail the save.
+ *
+ * `expectedMtime` is the mtime this document was last read or saved at. When given,
+ * the save is refused (see `isConflictError`) if the file has been written by someone
+ * else since. Automatic saves always pass it; a save the user chose to make over a
+ * known conflict leaves it out. EXT-03.
  */
 export async function saveDocument(
     path: string,
     content: string,
-    awaitSnapshot = false
+    { awaitSnapshot = false, expectedMtime }: { awaitSnapshot?: boolean; expectedMtime?: number } = {}
 ): Promise<number> {
-    const mtime = await invoke<number>("save_file", { path, content });
+    // Zero means "never knew it" (see knownMtime), which is no basis for refusing a save.
+    const args = expectedMtime ? { path, content, expectedMtime } : { path, content };
+    const mtime = await invoke<number>("save_file", args);
     const snapshot = recordSnapshot(path, content);
     if (awaitSnapshot) await snapshot;
     return mtime;
+}
+
+/** Whether a failed save was refused because the file changed on disk. Matches the
+ *  message of `CommandError::Conflict` in src-tauri/src/commands.rs. */
+export function isConflictError(err: unknown): boolean {
+    const msg = typeof err === "string" ? err : (err as { message?: string } | null)?.message;
+    return typeof msg === "string" && msg.startsWith("File changed on disk");
 }

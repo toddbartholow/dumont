@@ -80,6 +80,9 @@ pub enum CommandError {
     WriteError(String),
     #[error("File too large: {0}")]
     TooLarge(String),
+    /// The frontend matches on this message's prefix (`isConflictError`); keep them in step.
+    #[error("File changed on disk: {0}")]
+    Conflict(String),
 }
 
 impl Serialize for CommandError {
@@ -260,8 +263,20 @@ pub async fn read_file(path: String) -> Result<FileData, CommandError> {
 /// Unix the temp file takes the original's mode before the rename: a note kept at
 /// 0600 must not come back 0644. Hard links still lose their identity; a save
 /// gives the path a new file, as with most editors' atomic saves.
+///
+/// `expected_mtime` is the mtime the caller last saw for this file. When given, the
+/// save is refused with `Conflict` if the file on disk has a different one: someone
+/// else wrote it since, and writing now would silently replace their version. The
+/// check runs under the document's lock, so no save of OURS can slip in between it
+/// and the write; another program still can, in that instant, and nothing short of
+/// OS file locking closes that. A file that has vanished is written as before.
+/// Omit it for an intentional overwrite. EXT-03.
 #[tauri::command]
-pub async fn save_file(path: String, content: String) -> Result<u64, CommandError> {
+pub async fn save_file(
+    path: String,
+    content: String,
+    expected_mtime: Option<u64>,
+) -> Result<u64, CommandError> {
     // Mirror the read-side limit. Refusing to write a >50 MB markdown file
     // protects the user from accidentally truncating something pasted from
     // another tool, and matches what `read_file` would refuse to load back.
@@ -277,7 +292,13 @@ pub async fn save_file(path: String, content: String) -> Result<u64, CommandErro
     let lock = save_lock(&key);
     let result = {
         let _turn = lock.lock().await;
-        write_document(&path, &target, content).await
+        match expected_mtime {
+            Some(expected) => match tokio::fs::metadata(&target).await {
+                Ok(m) if mtime_ms(&m) != expected => Err(CommandError::Conflict(path.clone())),
+                _ => write_document(&path, &target, content).await,
+            },
+            None => write_document(&path, &target, content).await,
+        }
     };
     release_save_lock(&key, lock);
     result
@@ -1120,7 +1141,7 @@ pub fn set_ai_key(key: String) -> Result<(), String> {
 mod tests {
     use super::{
         apply_eol, find_backlinks, is_markdown_path, key_from_password, read_file, read_key_entry, sanitize_image_name,
-        save_file, save_lock, save_target, scan_backlinks, search_markdown_tree, validate_rel_path,
+        mtime_ms, save_file, save_lock, save_target, scan_backlinks, search_markdown_tree, validate_rel_path,
         wikilinks_in_line, BacklinkResult, CommandError, Eol, SAVE_LOCKS,
     };
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -1184,12 +1205,12 @@ mod tests {
             std::fs::create_dir_all(&dir).unwrap();
             let path = dir.join("doc.md").to_string_lossy().to_string();
 
-            let mtime = save_file(path.clone(), "hello".into()).await.unwrap();
+            let mtime = save_file(path.clone(), "hello".into(), None).await.unwrap();
             assert!(mtime > 0);
             assert_eq!(std::fs::read_to_string(&path).unwrap(), "hello");
 
             // Overwrite must replace the existing file (rename-over semantics).
-            let mtime2 = save_file(path.clone(), "world".into()).await.unwrap();
+            let mtime2 = save_file(path.clone(), "world".into(), None).await.unwrap();
             assert!(mtime2 >= mtime);
             assert_eq!(std::fs::read_to_string(&path).unwrap(), "world");
 
@@ -1252,7 +1273,7 @@ mod tests {
             // Seed a CRLF file, then "edit" it with LF-only content (as the editor
             // would hand us) and confirm the CRLF convention survives the save.
             std::fs::write(&path, "one\r\ntwo\r\n").unwrap();
-            save_file(path.clone(), "one\ntwo\nthree".into())
+            save_file(path.clone(), "one\ntwo\nthree".into(), None)
                 .await
                 .unwrap();
             assert_eq!(
@@ -1262,7 +1283,7 @@ mod tests {
 
             // A brand-new file keeps the editor's LF.
             let lf_path = dir.join("new.md").to_string_lossy().to_string();
-            save_file(lf_path.clone(), "a\nb".into()).await.unwrap();
+            save_file(lf_path.clone(), "a\nb".into(), None).await.unwrap();
             assert_eq!(std::fs::read_to_string(&lf_path).unwrap(), "a\nb");
 
             std::fs::remove_dir_all(&dir).ok();
@@ -1368,8 +1389,8 @@ mod tests {
             let (c1, c2) = (a.clone(), b.clone());
             let (r1, r2) = rt.block_on(async move {
                 tokio::join!(
-                    tokio::spawn(async move { save_file(p1, c1).await }),
-                    tokio::spawn(async move { save_file(p2, c2).await }),
+                    tokio::spawn(async move { save_file(p1, c1, None).await }),
+                    tokio::spawn(async move { save_file(p2, c2, None).await }),
                 )
             });
             let (r1, r2) = (r1.unwrap(), r2.unwrap());
@@ -1427,7 +1448,7 @@ mod tests {
             let turn = lock.lock().await;
 
             let p = path_str.clone();
-            let save = tokio::spawn(async move { save_file(p, "new\n".into()).await });
+            let save = tokio::spawn(async move { save_file(p, "new\n".into(), None).await });
             tokio::time::sleep(std::time::Duration::from_millis(200)).await;
             assert_eq!(std::fs::read_to_string(&path).unwrap(), "old\n", "saved while another save held the document");
             assert!(!save.is_finished(), "the save did not wait its turn");
@@ -1445,10 +1466,49 @@ mod tests {
         let path = dir.path().join("note.md").to_string_lossy().to_string();
         let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
         rt.block_on(async {
-            save_file(path.clone(), "one\n".into()).await.unwrap();
+            save_file(path.clone(), "one\n".into(), None).await.unwrap();
             let (_, key) = save_target(&path).await;
             assert!(!SAVE_LOCKS.lock().unwrap().contains_key(&key));
         });
+    }
+
+    /// A save that names the mtime it last saw must not write over a file someone else
+    /// has written since. That is the external edit autosave used to destroy silently.
+    #[test]
+    fn a_save_refuses_when_the_file_changed_since_it_was_last_seen() {
+        let dir = TempDir::new();
+        let path = dir.path().join("note.md");
+        std::fs::write(&path, "ours
+").unwrap();
+        let seen = mtime_ms(&std::fs::metadata(&path).unwrap());
+        let p = path.to_string_lossy().to_string();
+
+        // Another program writes it, and the clock moves on so the mtime visibly differs.
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        std::fs::write(&path, "theirs
+").unwrap();
+
+        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        let refused = rt.block_on(save_file(p.clone(), "ours, edited
+".into(), Some(seen)));
+        assert!(matches!(refused, Err(CommandError::Conflict(_))), "got {refused:?}");
+        assert!(refused.unwrap_err().to_string().starts_with("File changed on disk"));
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "theirs
+", "their version was replaced");
+
+        // The mtime it reports now is the one to pass, and an omitted one overwrites on purpose.
+        let now = mtime_ms(&std::fs::metadata(&path).unwrap());
+        rt.block_on(save_file(p.clone(), "merged
+".into(), Some(now))).unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "merged
+");
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        std::fs::write(&path, "theirs again
+").unwrap();
+        rt.block_on(save_file(p, "mine regardless
+".into(), None)).unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "mine regardless
+");
     }
 
     /// Saving through a symlink must update the file it names. Renaming over the link
@@ -1464,7 +1524,7 @@ mod tests {
         std::os::unix::fs::symlink(&real, &link).unwrap();
 
         let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
-        rt.block_on(save_file(link.to_string_lossy().to_string(), "new\n".into())).unwrap();
+        rt.block_on(save_file(link.to_string_lossy().to_string(), "new\n".into(), None)).unwrap();
 
         assert!(std::fs::symlink_metadata(&link).unwrap().file_type().is_symlink(), "the link was replaced");
         assert_eq!(std::fs::read_to_string(&real).unwrap(), "new\n");
@@ -1482,7 +1542,7 @@ mod tests {
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
 
         let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
-        rt.block_on(save_file(path.to_string_lossy().to_string(), "new\n".into())).unwrap();
+        rt.block_on(save_file(path.to_string_lossy().to_string(), "new\n".into(), None)).unwrap();
 
         let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
         assert_eq!(mode, 0o600, "mode came back as {mode:o}");

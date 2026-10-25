@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import { saveDocument } from "../utils/saveDocument";
+import { isConflictError, saveDocument } from "../utils/saveDocument";
 
 export interface UseAutosaveOptions {
   /** Master toggle (Settings → Editor). */
@@ -24,6 +24,18 @@ export interface UseAutosaveOptions {
   onSaved: (mtime: number, content: string, documentId: string | null) => void;
   /** Called when a write fails (already throttled to at most once per 30s). */
   onError: (message: string) => void;
+  /**
+   * The mtime the document was last read or saved at, read when the save fires. Passed to
+   * `save_file`, which refuses rather than write over a file someone else has changed since:
+   * an autosave is the one write the user never chose, so it must never be the one that
+   * silently destroys another program's edit. EXT-03.
+   */
+  getKnownMtime?: () => number;
+  /** The file changed on disk and the user has not yet said whose version wins. Autosave
+   *  stays parked until they do. */
+  isConflicted?: boolean;
+  /** Called, instead of `onError`, when the save was refused for that reason. */
+  onConflict?: (documentId: string | null) => void;
 }
 
 /** Debounce before persisting after the last edit. */
@@ -50,21 +62,28 @@ export function useAutosave({
   documentId = null,
   onSaved,
   onError,
+  getKnownMtime,
+  isConflicted = false,
+  onConflict,
 }: UseAutosaveOptions): void {
   const lastErrorRef = useRef(0);
 
   useEffect(() => {
-    if (!enabled || !filePath || content === originalContent || isReviewActive) return;
+    if (!enabled || !filePath || content === originalContent || isReviewActive || isConflicted) return;
     const id = window.setTimeout(async () => {
       try {
         // Through saveDocument, so an autosave is snapshotted like any other save.
         // This is also the save that makes coalescing non-negotiable: at one write
         // per 1.5 s of typing, an un-coalesced history would hold the last ninety
         // seconds of the document and nothing else. See src-tauri/src/history.rs.
-        const mtime = await saveDocument(filePath, content);
+        const mtime = await saveDocument(filePath, content, { expectedMtime: getKnownMtime?.() });
         onSaved(mtime, content, documentId);
         lastErrorRef.current = 0;
       } catch (err) {
+        if (onConflict && isConflictError(err)) {
+          onConflict(documentId);
+          return;
+        }
         const now = Date.now();
         if (now - lastErrorRef.current > ERROR_THROTTLE_MS) {
           lastErrorRef.current = now;
@@ -74,5 +93,5 @@ export function useAutosave({
       }
     }, AUTOSAVE_DELAY_MS);
     return () => window.clearTimeout(id);
-  }, [enabled, filePath, content, originalContent, isReviewActive, documentId, onSaved, onError]);
+  }, [enabled, filePath, content, originalContent, isReviewActive, isConflicted, documentId, onSaved, onError, getKnownMtime, onConflict]);
 }
