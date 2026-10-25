@@ -85,6 +85,7 @@ vi.mock("@tauri-apps/plugin-process", () => ({ relaunch: vi.fn() }));
 
 const { default: App } = await import("./App");
 const dialog = await import("@tauri-apps/plugin-dialog");
+const updater = await import("@tauri-apps/plugin-updater");
 const { getSavedViewMode } = await import("./utils/persistence");
 
 beforeAll(installCodeMirrorDomPolyfills);
@@ -198,6 +199,69 @@ describe("App", () => {
         await press({ key: "s", ctrlKey: true });
 
         await waitFor(() => expect(disk.get("/notes/a.md")).toMatch(/\*\*/));
+    });
+});
+
+/**
+ * Installing an update ends the process (on Windows, inside install() itself, with no close
+ * event), so it has to clear the same unsaved-changes dialog a window close does. It did not:
+ * "Update now" went straight to downloadAndInstall, and an untitled buffer, which autosave
+ * cannot rescue because it has nowhere to write, was simply gone. UPD-02.
+ */
+describe("App update restart", () => {
+    async function untitledDirtyWithUpdate() {
+        const upd = {
+            version: "9.9.9",
+            currentVersion: "1.0.0",
+            body: "",
+            download: vi.fn(async () => {}),
+            install: vi.fn(async () => {}),
+        };
+        vi.mocked(updater.check).mockResolvedValueOnce(upd as never);
+        boot();
+        await press({ key: "n", ctrlKey: true });
+        // New File lands in the editor already, so no Ctrl+E here: makeDirty's toggle
+        // would flip it back to the reader and hide the toolbar.
+        const bold = await screen.findByRole("button", { name: /bold/i });
+        await act(async () => {
+            fireEvent.click(bold);
+        });
+        await waitFor(() => expect(document.body.textContent).toMatch(/Unsaved/i));
+        fireEvent.click(await screen.findByRole("button", { name: "Update now" }));
+        await screen.findByText(/save them before restarting to update/i);
+        return upd;
+    }
+
+    it("asks about unsaved work first, and Cancel installs nothing", async () => {
+        const upd = await untitledDirtyWithUpdate();
+
+        fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+
+        expect(await screen.findByRole("button", { name: "Restart now" })).toBeTruthy();
+        expect(upd.install).not.toHaveBeenCalled();
+        expect(document.querySelector(".cm-content")).toBeTruthy();
+    });
+
+    it("saves the untitled buffer where the user picks, then installs", async () => {
+        const upd = await untitledDirtyWithUpdate();
+        nextSavePath = "/notes/kept.md";
+
+        fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+        await waitFor(() => expect(upd.install).toHaveBeenCalledTimes(1));
+        expect(disk.get("/notes/kept.md")).toMatch(/\*\*/);
+        // Installing is the updater's exit, not ours: the window is left for it.
+        expect(win.destroy).not.toHaveBeenCalled();
+    });
+
+    it("keeps the app open when the Save As for an untitled buffer is cancelled", async () => {
+        const upd = await untitledDirtyWithUpdate();
+        nextSavePath = null;
+
+        fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+        expect(await screen.findByRole("button", { name: "Restart now" })).toBeTruthy();
+        expect(upd.install).not.toHaveBeenCalled();
     });
 });
 

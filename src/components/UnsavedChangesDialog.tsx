@@ -10,6 +10,9 @@ interface UnsavedChangesDialogProps {
      *  dialog lists them and the buttons read "Save all" / "Discard all". Omit or
      *  pass a single name for the original single-file wording. */
     dirtyNames?: string[];
+    /** What happens once the user answers, as the end of "save them before ...?".
+     *  Closing by default; the updater passes "restarting to update". */
+    before?: string;
 }
 
 export function UnsavedChangesDialog({
@@ -18,6 +21,7 @@ export function UnsavedChangesDialog({
     onDiscard,
     onSave,
     dirtyNames,
+    before = "closing",
 }: UnsavedChangesDialogProps) {
     const saveButtonRef = useRef<HTMLButtonElement>(null);
     const many = (dirtyNames?.length ?? 0) > 1;
@@ -55,8 +59,8 @@ export function UnsavedChangesDialog({
             <div className="px-5 pb-4">
                 <p id="unsaved-dialog-desc" className="text-sm text-[var(--text-secondary)] leading-relaxed">
                     {many
-                        ? "These files have unsaved changes. Do you want to save them before closing?"
-                        : "You have unsaved changes. Do you want to save them before closing?"}
+                        ? `These files have unsaved changes. Do you want to save them before ${before}?`
+                        : `You have unsaved changes. Do you want to save them before ${before}?`}
                 </p>
                 {many && (
                     <ul className="mt-3 max-h-40 overflow-y-auto rounded-lg border border-[var(--border)] bg-[var(--bg-secondary)] divide-y divide-[var(--border)]">

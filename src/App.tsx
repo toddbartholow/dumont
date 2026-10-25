@@ -801,6 +801,32 @@ function AppContent() {
   const reviewActiveRef = useRef(false);
   reviewActiveRef.current = proposedDoc != null;
 
+  // The unsaved-changes dialog guards two exits: closing the window, and the
+  // restart that installs an update. A window close ends by destroying the window;
+  // an update parks a resolver here instead, because the updater has to do the
+  // exiting itself and only needs a yes or no. UPD-02.
+  const restartGateRef = useRef<((proceed: boolean) => void) | null>(null);
+  const [unsavedBefore, setUnsavedBefore] = useState("closing");
+  const settleRestartGate = useCallback((proceed: boolean) => {
+    const gate = restartGateRef.current;
+    restartGateRef.current = null;
+    gate?.(proceed);
+  }, []);
+  const confirmRestart = useCallback(
+    () =>
+      new Promise<boolean>((resolve) => {
+        if (collectDirtyTabs().length === 0) {
+          resolve(true);
+          return;
+        }
+        settleRestartGate(false);
+        restartGateRef.current = resolve;
+        setUnsavedBefore("restarting to update");
+        showModal("unsavedBeforeClose");
+      }),
+    [collectDirtyTabs, settleRestartGate, showModal]
+  );
+
   // Intercept EVERY window-close path (Alt+F4, taskbar close, the title bar X,
   // OS shutdown) and route dirty buffers through the unsaved-changes dialog.
   // Previously only the custom X button checked isDirty, so Alt+F4 silently
@@ -816,6 +842,10 @@ function AppContent() {
           // to be discarded silently on Alt+F4 / taskbar close. TABS-04.
           if (collectDirtyTabs().length > 0) {
             event.preventDefault();
+            // A close outranks a restart that was waiting on the same dialog:
+            // the user asked to quit, not to install.
+            settleRestartGate(false);
+            setUnsavedBefore("closing");
             showModal("unsavedBeforeClose");
           }
         })
@@ -838,6 +868,16 @@ function AppContent() {
   const forceCloseWindow = useCallback(() => {
     Window.getCurrent().destroy().catch(() => {/* browser dev mode */});
   }, []);
+  // The dialog was answered with save or discard: let a waiting update restart,
+  // or else close the window.
+  const proceedPastUnsaved = useCallback(() => {
+    if (restartGateRef.current) settleRestartGate(true);
+    else forceCloseWindow();
+  }, [settleRestartGate, forceCloseWindow]);
+  const cancelUnsavedDialog = useCallback(() => {
+    closeModal.unsavedBeforeClose();
+    settleRestartGate(false);
+  }, [closeModal, settleRestartGate]);
 
   // Save EVERY dirty tab, then close. An untitled tab prompts for a location;
   // cancelling that (or any failed save) aborts the close so nothing is lost. TABS-04.
@@ -850,7 +890,10 @@ function AppContent() {
           filters: [{ name: "Markdown", extensions: ["md"] }],
           defaultPath: t.fileName,
         });
-        if (!selected) return; // cancelled a save-as → keep the app open
+        if (!selected) {
+          settleRestartGate(false);
+          return; // cancelled a save-as → keep the app open
+        }
         path = selected;
       }
       try {
@@ -863,16 +906,17 @@ function AppContent() {
       } catch (err) {
         const msg = errMessage(err);
         showToast(msg || `Failed to save ${t.fileName}`, "error");
+        settleRestartGate(false);
         return; // don't close on a failed save — the user would lose the buffer
       }
     }
-    forceCloseWindow();
-  }, [collectDirtyTabs, forceCloseWindow, showToast, hideModal]);
+    proceedPastUnsaved();
+  }, [collectDirtyTabs, proceedPastUnsaved, settleRestartGate, showToast, hideModal]);
 
   const handleDiscardAndCloseWindow = useCallback(() => {
     hideModal("unsavedBeforeClose");
-    forceCloseWindow();
-  }, [forceCloseWindow, hideModal]);
+    proceedPastUnsaved();
+  }, [proceedPastUnsaved, hideModal]);
 
   // External-change detection: on window focus, stat the open file and reload
   // (clean buffer) or warn (dirty buffer). EXT-01. Callbacks are memoised so the
@@ -1831,7 +1875,7 @@ function AppContent() {
 
       {/* Startup update check; invisible unless an update is actually available. */}
       <Suspense fallback={null}>
-        <UpdateDialog />
+        <UpdateDialog confirmRestart={confirmRestart} />
       </Suspense>
 
       {!hasFile ? (
@@ -2060,10 +2104,11 @@ function AppContent() {
         <Suspense fallback={null}>
           <UnsavedChangesDialog
             isOpen={showUnsavedBeforeClose}
-            onClose={closeModal.unsavedBeforeClose}
+            onClose={cancelUnsavedDialog}
             onDiscard={handleDiscardAndCloseWindow}
             onSave={handleSaveAndCloseWindow}
             dirtyNames={tabBarItems.filter((t) => t.dirty).map((t) => t.name)}
+            before={unsavedBefore}
           />
         </Suspense>
       )}
