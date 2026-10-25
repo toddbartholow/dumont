@@ -24,10 +24,23 @@ function holdSaves(): () => Promise<void> {
     };
 }
 
+let readGate: Promise<void> | null = null;
+
+/** Hold every read_file until the returned function is called. */
+function holdReads(): () => Promise<void> {
+    let open!: () => void;
+    readGate = new Promise<void>((r) => { open = r; });
+    return async () => {
+        readGate = null;
+        await act(async () => open());
+    };
+}
+
 const invoke = vi.fn(async (cmd: string, args?: Record<string, unknown>) => {
     const path = args?.path as string;
     switch (cmd) {
         case "read_file": {
+            if (readGate) await readGate;
             if (!disk.has(path)) throw new Error(`File not found: ${path}`);
             const content = disk.get(path)!;
             return {
@@ -103,6 +116,11 @@ const { getSavedViewMode } = await import("./utils/persistence");
 
 beforeAll(installCodeMirrorDomPolyfills);
 
+// The real App with CodeMirror under jsdom is heavy: one of these tests takes ~0.5 s alone and
+// several seconds when the whole suite runs in parallel, which is too close to vitest's 5 s
+// default for the ones that open two tabs and type into both.
+vi.setConfig({ testTimeout: 20_000 });
+
 beforeEach(() => {
     disk.clear();
     mtimes.clear();
@@ -111,6 +129,7 @@ beforeEach(() => {
     nextOpenPath = null;
     nextSavePath = null;
     saveGate = null;
+    readGate = null;
     vi.mocked(dialog.save).mockClear();
 });
 
@@ -395,5 +414,64 @@ describe("App save completion", () => {
         expect(tabNamed(/b\.md/)).toBeTruthy();
         expect(tabNamed(/kept\.md/)).toBeTruthy();
         expect(screen.getAllByRole("tab")).toHaveLength(2);
+    });
+});
+
+/**
+ * A file that changed on disk is reloaded on focus when its buffer is clean. "Clean" is judged
+ * before the read, and the read takes time: whatever the user does meanwhile must win. EXT-02.
+ */
+describe("App external reload", () => {
+    const focusWindow = () =>
+        act(async () => {
+            window.dispatchEvent(new Event("focus"));
+        });
+    const changeOnDisk = (path: string, text: string) => {
+        disk.set(path, text);
+        mtimes.set(path, (mtimes.get(path) ?? 1) + 10);
+    };
+
+    it("does not replace what the user typed while the reload was reading", async () => {
+        boot();
+        await openViaDialog("/notes/a.md", "# A\n");
+        changeOnDisk("/notes/a.md", "# A, from another editor\n");
+
+        const release = holdReads();
+        await focusWindow();
+        await makeDirty();
+        await release();
+
+        const editor = document.querySelector(".cm-content")!;
+        expect(editor.textContent).toMatch(/\*\*/);
+        expect(editor.textContent).not.toMatch(/another editor/);
+        // Disk and buffer now disagree, so it says so instead of reloading silently.
+        expect(await screen.findByText(/changed on disk/i)).toBeTruthy();
+    });
+
+    it("does not reload a background tab over edits made after it was judged clean", async () => {
+        boot();
+        await openViaDialog("/notes/a.md", "# A\n");
+        await openViaDialog("/notes/b.md", "# B\n");
+        changeOnDisk("/notes/a.md", "# A, from another editor\n");
+
+        const switchTo = (name: RegExp) =>
+            act(async () => {
+                fireEvent.mouseDown(screen.getAllByRole("tab").find((t) => name.test(t.textContent ?? ""))!, { button: 0 });
+            });
+
+        const release = holdReads();
+        await focusWindow();
+        // While the background read of a.md is out: bring it forward, type into it, and go
+        // back to b.md, which files those edits in a.md's snapshot. That snapshot is what the
+        // late read used to overwrite, text and baseline both, so the edits vanished silently.
+        await switchTo(/a\.md/);
+        await makeDirty();
+        await switchTo(/b\.md/);
+        await release();
+
+        await switchTo(/a\.md/);
+        const editor = document.querySelector(".cm-content")!;
+        expect(editor.textContent).toMatch(/\*\*/);
+        expect(editor.textContent).not.toMatch(/another editor/);
     });
 });

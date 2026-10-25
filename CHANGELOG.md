@@ -32,6 +32,13 @@ divider is the upstream project's changelog, retained for provenance.
   document. The assistant now leaves them unapplied and says why. Text typed
   into the same document while it worked is kept: the edits are applied to
   the document as it is when the reply arrives.
+- **Reloading a file changed by another program no longer loses your
+  typing.** When Dumont regains focus it reloads files that changed on disk,
+  if you have not edited them. Anything typed while that reload was reading
+  the file, in the open tab or in another tab you switched to and back from,
+  could be replaced by the version on disk. The reload is now dropped instead,
+  and you get the usual "changed on disk" warning. Switching tabs while the
+  check runs no longer reloads the wrong file.
 - **A save that finishes after you switch tabs updates the right tab.** Saves
   run in the background, and one still in flight when you changed tabs was
   applied to the tab you switched to: that tab could show as unsaved when it

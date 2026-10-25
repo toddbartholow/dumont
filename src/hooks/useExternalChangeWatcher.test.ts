@@ -20,7 +20,7 @@ function setup(over: Partial<UseExternalChangeWatcherOptions> = {}) {
     originalContentRef: ref("same"),
     knownMtimeRef: ref(100),
     isReviewActiveRef: ref(false),
-    reload: vi.fn().mockResolvedValue(undefined),
+    reload: vi.fn().mockResolvedValue(true),
     onReloaded: vi.fn(),
     onConflict: vi.fn(),
     ...over,
@@ -42,7 +42,7 @@ describe("useExternalChangeWatcher", () => {
     (invoke as Mock).mockResolvedValue({ modified: 200 });
     const o = setup();
     await focus();
-    expect(o.reload).toHaveBeenCalledWith("C:/doc.md");
+    expect(o.reload).toHaveBeenCalledWith("C:/doc.md", expect.any(Function));
     expect(o.onReloaded).toHaveBeenCalled();
     expect(o.onConflict).not.toHaveBeenCalled();
     expect(o.knownMtimeRef.current).toBe(200); // advanced so it won't re-fire
@@ -84,7 +84,7 @@ describe("useExternalChangeWatcher", () => {
     isReviewActiveRef.current = false; // review ended
     await focus(); // must run now
     expect(invoke).toHaveBeenCalledTimes(1);
-    expect(o.reload).toHaveBeenCalledWith("C:/doc.md");
+    expect(o.reload).toHaveBeenCalledWith("C:/doc.md", expect.any(Function));
   });
 
   it("ignores focus when no file is open", async () => {
@@ -92,5 +92,49 @@ describe("useExternalChangeWatcher", () => {
     await focus();
     expect(invoke).not.toHaveBeenCalled();
     expect(o.reload).not.toHaveBeenCalled();
+  });
+
+  // Every ref describes the ACTIVE document. Switch tabs during the stat and they describe
+  // another file: comparing against them reloaded A over B and wrote A's mtime into B's slot.
+  it("drops the check when the user switches documents during the stat", async () => {
+    const filePathRef = ref<string | null>("C:/a.md");
+    const knownMtimeRef = ref(500);
+    (invoke as Mock).mockImplementation(async () => {
+      filePathRef.current = "C:/b.md"; // the switch lands while the stat is out
+      return { modified: 900 };
+    });
+    const o = setup({ filePathRef, knownMtimeRef });
+    await focus();
+    expect(o.reload).not.toHaveBeenCalled();
+    expect(o.onConflict).not.toHaveBeenCalled();
+    expect(knownMtimeRef.current).toBe(500); // B's known mtime is untouched
+  });
+
+  it("asks the reload to drop its result if the buffer moves during the read", async () => {
+    (invoke as Mock).mockResolvedValue({ modified: 200 });
+    const contentRef = ref("same");
+    let stillWanted!: () => boolean;
+    const reload = vi.fn(async (_path: string, ok: () => boolean) => {
+      stillWanted = ok;
+      return true;
+    });
+    setup({ contentRef, reload });
+    await focus();
+    expect(stillWanted()).toBe(true);
+    contentRef.current = "typed during the read";
+    expect(stillWanted()).toBe(false);
+  });
+
+  it("warns when the reload was dropped because the user typed", async () => {
+    (invoke as Mock).mockResolvedValue({ modified: 200 });
+    const contentRef = ref("same");
+    const reload = vi.fn(async () => {
+      contentRef.current = "typed during the read";
+      return false;
+    });
+    const o = setup({ contentRef, reload });
+    await focus();
+    expect(o.onReloaded).not.toHaveBeenCalled();
+    expect(o.onConflict).toHaveBeenCalledTimes(1);
   });
 });
