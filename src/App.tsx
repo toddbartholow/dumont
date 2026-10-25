@@ -99,6 +99,7 @@ import { revealMainWindow } from "./utils/appWindow";
 // Every write to a document goes through saveDocument, which is also what records
 // a version-history snapshot. See src/utils/saveDocument.ts for the one exception.
 import { isConflictError, saveDocument } from "./utils/saveDocument";
+import { recordAutosaveFailure, type AutosaveFailure } from "./utils/autosaveRetry";
 import { saveThenClose } from "./utils/saveCloseTab";
 import { setHistoryConfig } from "./utils/history";
 import { TabBar, type TabBarItem } from "./components/TabBar";
@@ -1024,15 +1025,35 @@ function AppContent() {
   // (those live in `content`, not the snapshot). Saved tabs get their
   // originalContent/knownMtime updated, which clears them from the dirty set so
   // the effect settles without looping. TABS-06.
+  //
+  // A failed write is remembered per tab (SAVE-03). It used to be swallowed whole, and since
+  // this effect re-runs only when the tab list changes, a tab whose write failed once sat
+  // dirty with no message and no second attempt for as long as it stayed in the background.
+  // Now the user is told which file, at most every 30 s, and the write is retried with a
+  // backoff (autosaveRetry), the same rules the active tab's autosave follows.
+  const bgFailuresRef = useRef(new Map<string, AutosaveFailure>());
+  // Bumped after a failed write so the effect runs again and schedules the retry.
+  const [bgRetryTick, setBgRetryTick] = useState(0);
   useEffect(() => {
     if (!autoSaveEnabled) return;
     const dirtyBg = backgroundTabsToAutosave(tabs, activeTabIdRef.current).filter((t) => !conflictedTabs.has(t.id));
+    const failures = bgFailuresRef.current;
+    // A tab that is no longer waiting here (saved, closed, brought to the front) starts over.
+    for (const id of [...failures.keys()]) {
+      if (!dirtyBg.some((t) => t.id === id)) failures.delete(id);
+    }
     if (dirtyBg.length === 0) return;
+    // The debounce, or the soonest any failed tab's backoff ends, whichever is later.
+    const due = Math.min(...dirtyBg.map((t) => failures.get(t.id)?.retryAt ?? 0));
     const timer = window.setTimeout(async () => {
       let wrote = false;
+      let failed = false;
       for (const t of dirtyBg) {
+        const prev = failures.get(t.id);
+        if (prev && prev.retryAt > Date.now()) continue;
         try {
           const mtime = await saveDocument(t.filePath!, t.content, { expectedMtime: t.knownMtime });
+          failures.delete(t.id);
           // markTabSaved refuses to mark it clean if its content moved while the write was in
           // flight: the user can switch to a background tab and type into it mid-save, and
           // calling that saved would quietly lose what they typed.
@@ -1043,17 +1064,22 @@ function AppContent() {
           if (isConflictError(err)) {
             markConflicted(t.id);
             showToast(`"${t.fileName}" changed on disk in a background tab. Its autosave is paused until you choose which version to keep.`, "error");
+            continue;
           }
-          // Anything else is best-effort; the active-tab path surfaces disk errors.
+          const { failure, notify } = recordAutosaveFailure(prev, Date.now());
+          failures.set(t.id, failure);
+          if (notify) showToast(`Couldn't autosave "${t.fileName}": ${errMessage(err) || "the write failed"}`, "error");
+          failed = true;
         }
       }
       // A background tab that just landed on disk may be the thing that links
       // here, so the backlinks panel has to re-scan. Nothing else would tell it:
       // the folder did change, but the window never lost focus.
       if (wrote) bumpSaved();
-    }, 1500);
+      if (failed) setBgRetryTick((n) => n + 1);
+    }, Math.max(1500, due - Date.now()));
     return () => window.clearTimeout(timer);
-  }, [tabs, conflictedTabs, autoSaveEnabled, commitTabs, bumpSaved, markConflicted, showToast]);
+  }, [tabs, conflictedTabs, autoSaveEnabled, commitTabs, bumpSaved, markConflicted, showToast, bgRetryTick]);
 
   // External-change detection for BACKGROUND tabs. The active tab is handled by
   // useExternalChangeWatcher; on window focus we also stat every other open
