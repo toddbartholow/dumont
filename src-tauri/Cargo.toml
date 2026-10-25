@@ -64,6 +64,11 @@ tauri-plugin-mcp-bridge = "0.11"
 
 # Auto-update from GitHub Releases (latest.json) + relaunch after install.
 # Desktop-only: the updater has no mobile implementation.
+[dev-dependencies]
+# ai.rs's tests serve real HTTP on a local port (tokio::net). Declared rather than
+# left to feature unification, for the reason given on the tokio line above.
+tokio = { version = "1", features = ["net"] }
+
 [target."cfg(not(any(target_os = \"android\", target_os = \"ios\")))".dependencies]
 tauri-plugin-updater = "2"
 tauri-plugin-process = "2"

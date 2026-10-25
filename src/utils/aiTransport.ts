@@ -23,10 +23,17 @@ let nextRequestId = 0;
 
 /**
  * POST `body` to the AI endpoint via the Rust transport. Resolves with the
- * status and full body once the response has been fully streamed; `onChunk`
+ * status and body once the response has been fully streamed; `onChunk`
  * and `onStatus` fire along the way for streaming consumers. Non-2xx statuses
  * resolve normally (callers map them to their own messages); network
  * failures, timeouts, and aborts reject.
+ *
+ * With an `onChunk` consumer, a successful body is NOT also collected here: the
+ * consumer has it, and a second copy of a long generation is memory spent on
+ * nothing. `body` is then "". An error body is always collected, because the
+ * caller's message is made from it; Rust cuts it to 64 KB first, and caps every
+ * response's size (src-tauri/src/ai.rs). `idleTimeoutMs` ends a response that
+ * sends nothing for that long, restarting on every chunk. AI-07.
  *
  * The API key is deliberately NOT a parameter here (SECURITY-01): Rust reads it
  * from the OS keychain inside `ai_request`, so the credential never enters the
@@ -39,6 +46,7 @@ export async function aiFetch(
         signal?: AbortSignal;
         connectTimeoutMs: number;
         totalTimeoutMs?: number;
+        idleTimeoutMs?: number;
         onChunk?: (text: string) => void;
         onStatus?: (status: number) => void;
     }
@@ -63,7 +71,7 @@ export async function aiFetch(
             status = event.status;
             opts.onStatus?.(event.status);
         } else if (event.type === "chunk") {
-            responseBody += event.data;
+            if (!opts.onChunk || status < 200 || status >= 300) responseBody += event.data;
             opts.onChunk?.(event.data);
         } else {
             markDone();
@@ -83,6 +91,7 @@ export async function aiFetch(
             body,
             connectTimeoutMs: opts.connectTimeoutMs,
             totalTimeoutMs: opts.totalTimeoutMs ?? null,
+            idleTimeoutMs: opts.idleTimeoutMs ?? null,
             channel,
         });
         // Done follows the command result almost immediately; the race guards

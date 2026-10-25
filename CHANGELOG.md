@@ -54,6 +54,14 @@ divider is the upstream project's changelog, retained for provenance.
   the file, at most once every 30 seconds, and autosave keeps retrying, waiting
   longer each time up to a minute, until the write succeeds. The open tab's
   autosave retries the same way instead of waiting for your next keystroke.
+- **A misbehaving AI endpoint can no longer use up the app's memory.** A
+  reply was held in full however large it grew, twice over in the AI panel,
+  and one that never sent a line break or never finished was kept waiting on
+  indefinitely. Replies are now limited to 32 MB, and to 8 MB without a line
+  break, and an error reply is cut to the part the message shows. In the AI
+  panel, a reply that sends nothing for two minutes is stopped with a message
+  saying so. A slow reply that keeps sending is never cut off, and Stop still
+  ends a long one.
 - **A save that finishes after you switch tabs updates the right tab.** Saves
   run in the background, and one still in flight when you changed tabs was
   applied to the tab you switched to: that tab could show as unsaved when it

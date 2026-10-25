@@ -18,27 +18,63 @@ interface EventChannel {
 const channelOf = (args: unknown) => (args as { channel: EventChannel }).channel;
 
 describe("aiFetch", () => {
-    it("accumulates chunk/status/done events into the response", async () => {
+    /** The Rust side's events for one response. */
+    const respond = (status: number, chunks: string[]) =>
         mockInvoke.mockImplementation(async (cmd, args) => {
             if (cmd !== "ai_request") return;
             const ch = channelOf(args);
-            ch.onmessage({ type: "status", status: 200 });
-            ch.onmessage({ type: "chunk", data: "hel" });
-            ch.onmessage({ type: "chunk", data: "lo\n" });
+            ch.onmessage({ type: "status", status });
+            for (const data of chunks) ch.onmessage({ type: "chunk", data });
             ch.onmessage({ type: "done" });
         });
 
+    it("accumulates chunk/status/done events into the response", async () => {
+        respond(200, ["hel", "lo\n"]);
+
         const statuses: number[] = [];
-        const chunks: string[] = [];
         const res = await aiFetch("https://api.test/v1", "{}", {
             connectTimeoutMs: 1000,
             onStatus: (s) => statuses.push(s),
-            onChunk: (t) => chunks.push(t),
         });
 
         expect(res).toEqual({ status: 200, body: "hello\n" });
         expect(statuses).toEqual([200]);
+    });
+
+    // AI-07: a streamed reply is the consumer's; a second whole copy here is memory spent on
+    // nothing, for as long as the generation runs.
+    it("hands a successful body to the stream consumer instead of also keeping it", async () => {
+        respond(200, ["hel", "lo\n"]);
+
+        const chunks: string[] = [];
+        const res = await aiFetch("https://api.test/v1", "{}", {
+            connectTimeoutMs: 1000,
+            onChunk: (t) => chunks.push(t),
+        });
+
         expect(chunks).toEqual(["hel", "lo\n"]);
+        expect(res).toEqual({ status: 200, body: "" });
+    });
+
+    it("still keeps an error body with a stream consumer, for the error message", async () => {
+        respond(500, ["upstream ", "exploded"]);
+
+        const res = await aiFetch("https://api.test/v1", "{}", { connectTimeoutMs: 1000, onChunk: () => {} });
+
+        expect(res).toEqual({ status: 500, body: "upstream exploded" });
+    });
+
+    it("passes the idle timeout to Rust", async () => {
+        let captured: Record<string, unknown> | undefined;
+        mockInvoke.mockImplementation(async (cmd, args) => {
+            if (cmd !== "ai_request") return;
+            captured = args as Record<string, unknown>;
+            channelOf(args).onmessage({ type: "done" });
+        });
+
+        await aiFetch("https://api.test/v1", "{}", { connectTimeoutMs: 1000, idleTimeoutMs: 30_000 });
+
+        expect(captured?.idleTimeoutMs).toBe(30_000);
     });
 
     it("never puts the API key in the ai_request payload (Rust reads it from the keychain, SECURITY-01)", async () => {
@@ -58,7 +94,7 @@ describe("aiFetch", () => {
         expect(captured).not.toHaveProperty("apiKey");
         expect(captured).not.toHaveProperty("key");
         expect(Object.keys(captured!).sort()).toEqual(
-            ["body", "channel", "connectTimeoutMs", "endpoint", "id", "totalTimeoutMs"],
+            ["body", "channel", "connectTimeoutMs", "endpoint", "id", "idleTimeoutMs", "totalTimeoutMs"],
         );
     });
 
