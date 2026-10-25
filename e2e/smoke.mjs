@@ -25,6 +25,12 @@ const file = join(dir, "smoke.md");
 writeFileSync(file, "# Smoke test\n\nFirst paragraph.\n");
 const onDisk = () => readFileSync(file, "utf8");
 
+// What the test types. No spaces: WebKitWebDriver drops most of the spaces in a
+// key sequence (it typed "Saved by the smoke test." as "Saved bythesmoketest."),
+// and the point here is the save, not the driver's typing.
+const SAVED = "SavedBySmokeTest";
+const TAIL = "UnsavedTail";
+
 // tauri-driver inherits this to the app, whose webview only accepts an automation
 // session when it is set.
 const driver = spawn("tauri-driver", ["--port", String(PORT)], {
@@ -140,20 +146,20 @@ async function run() {
             await editor.waitForDisplayed({ timeout: WAIT });
             await editor.click();
             await browser.keys([Key.Ctrl, Key.End]);
-            await browser.keys([Key.Enter, ..."Saved by the smoke test."]);
+            await browser.keys([Key.Enter, ...SAVED]);
             await browser.keys([Key.Ctrl, "s"]);
-            await waitForDisk(browser, "Saved by the smoke test.");
+            await waitForDisk(browser, SAVED);
         });
 
         await step(browser, "closing with unsaved changes asks, and Save writes them", async () => {
-            await browser.keys([..." Unsaved tail."]);
+            await browser.keys([Key.Enter, ...TAIL]);
             await (await browser.$('button[aria-label="Close"]')).click();
             const dialog = await browser.$('[role="alertdialog"]');
             await dialog.waitForDisplayed({ timeout: WAIT });
             assert.match(await dialog.getText(), /save them before closing/i);
-            assert.ok(!onDisk().includes("Unsaved tail."), "saved before the dialog was answered");
+            assert.ok(!onDisk().includes(TAIL), "saved before the dialog was answered");
             await (await dialog.$("button=Save")).click();
-            await waitForDisk(browser, "Unsaved tail.");
+            await waitForDisk(browser, TAIL);
         });
     } finally {
         await endSession(browser);
@@ -165,7 +171,7 @@ async function run() {
     try {
         await step(browser, "a relaunch restores the open tab and its saved text", async () => {
             await expectTab(browser, "smoke.md");
-            await waitForText(browser, "Unsaved tail.");
+            await waitForText(browser, TAIL);
         });
 
         await step(browser, "closing with nothing unsaved just closes", async () => {
