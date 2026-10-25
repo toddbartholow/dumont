@@ -178,8 +178,8 @@ async function run() {
             await (await browser.$('button[aria-label="Close"]')).click();
             // The app quitting takes the page with it, so the first WebDriver call
             // to fail is the proof it closed. webdriver logs that failure as an
-            // ERROR ("session deleted because of page crash or hang"); here it is
-            // the expected outcome. A dialog instead means it asked for no reason.
+            // ERROR, worded differently from run to run; here it is the expected
+            // outcome. A dialog instead means it asked for no reason.
             // waitUntil retries a condition that throws, so record the outcome and
             // assert after it.
             let outcome = "running";
