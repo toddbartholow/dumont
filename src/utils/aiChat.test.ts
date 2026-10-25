@@ -12,12 +12,14 @@ const cfg: AIConfig = {
 };
 const messages: ChatMessage[] = [{ role: "user", content: "hi" }];
 
-/** Make aiFetch behave like the Rust transport: status first, then chunks. */
+/** Make aiFetch behave like the Rust transport: status first, then chunks. Like the real
+ *  aiFetch, it hands back no body for a success when the chunks had a consumer. */
 const streamResponse = (status: number, chunks: string[]) =>
     mockAiFetch.mockImplementation(async (_endpoint, _body, opts) => {
         opts.onStatus?.(status);
         for (const chunk of chunks) opts.onChunk?.(chunk);
-        return { status, body: chunks.join("") };
+        const ok = status >= 200 && status < 300;
+        return { status, body: ok && opts.onChunk ? "" : chunks.join("") };
     });
 
 describe("streamChat", () => {
@@ -46,6 +48,13 @@ describe("streamChat", () => {
         await expect(streamChat(messages, cfg)).rejects.toThrow(
             "AI service unavailable (500). Try again later.\nupstream exploded"
         );
+    });
+
+    // AI-07: an endpoint that goes quiet mid-reply is ended by the transport's idle timeout.
+    it("asks the transport for an idle timeout, and explains a stall in its own words", async () => {
+        mockAiFetch.mockRejectedValue(new Error("stalled"));
+        await expect(streamChat(messages, cfg)).rejects.toThrow(/stopped sending for 120s/);
+        expect(mockAiFetch.mock.calls.at(-1)![2].idleTimeoutMs).toBe(120_000);
     });
 
     it("propagates an AbortError from the transport", async () => {

@@ -14,6 +14,10 @@ export interface ChatMessage {
 }
 
 const AI_CONNECT_TIMEOUT_MS = 120_000;
+// How long a stream may go without sending anything before it is given up on. It
+// restarts on every chunk, so it never cuts off a generation that is still going;
+// a long one is the Stop button's business. AI-07.
+const AI_IDLE_TIMEOUT_MS = 120_000;
 
 function mapHttpError(status: number, body: string): string {
     const detail = body.trim().slice(0, 200);
@@ -49,6 +53,10 @@ export async function streamChat(
     let sawDataLine = false;
     let buffer = "";
     let full = "";
+    // The body as received, kept only until the first SSE frame shows this is a stream.
+    // An endpoint that ignores `stream: true` sends one ordinary completion, and this is
+    // where it is read from: aiFetch does not keep a copy when we consume the chunks.
+    let raw = "";
 
     const parseSseLine = (line: string) => {
         const trimmed = line.trim();
@@ -83,6 +91,7 @@ export async function streamChat(
                 // Guards only until the response headers arrive (no totalTimeoutMs)
                 // so a long generation isn't cut off mid-stream.
                 connectTimeoutMs: AI_CONNECT_TIMEOUT_MS,
+                idleTimeoutMs: AI_IDLE_TIMEOUT_MS,
                 onStatus: (s) => {
                     status = s;
                 },
@@ -97,6 +106,7 @@ export async function streamChat(
                     const lines = buffer.split("\n");
                     buffer = lines.pop() ?? "";
                     for (const line of lines) parseSseLine(line);
+                    raw = sawDataLine ? "" : raw + text;
                 },
             }
         );
@@ -105,6 +115,9 @@ export async function streamChat(
         // aborts arrive as AbortError and rethrow untouched.)
         if (e instanceof Error && e.message.includes("timed out")) {
             throw new Error(`AI endpoint did not respond within ${AI_CONNECT_TIMEOUT_MS / 1000}s.`, { cause: e });
+        }
+        if (e instanceof Error && e.message === "stalled") {
+            throw new Error(`AI endpoint stopped sending for ${AI_IDLE_TIMEOUT_MS / 1000}s, so the reply was stopped.`, { cause: e });
         }
         throw e;
     }
@@ -118,7 +131,7 @@ export async function streamChat(
     if (!sawDataLine) {
         let data: unknown;
         try {
-            data = JSON.parse(res.body);
+            data = JSON.parse(raw);
         } catch {
             return full; // not SSE and not JSON — nothing usable
         }
