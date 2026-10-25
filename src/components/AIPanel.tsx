@@ -17,9 +17,18 @@ interface AIPanelProps {
      *  the webview (SECURITY-01); the panel only needs to know one exists so it can
      *  nudge the user to add one for a cloud provider. */
     hasKey?: boolean;
-    /** Called (Agent mode) with the proposed document to review in the editor. */
-    onProposeEdit?: (proposedDoc: string) => void;
+    /** Which open document `note` is (the tab id). A reply is only ever applied to
+     *  the document it was asked about; see `send`. */
+    documentId?: string | null;
+    /** Called (Agent mode) with the proposed document to review in the editor, the
+     *  document it was asked about, and the text the edits were applied to. Returns
+     *  whether the review was shown; App refuses one that no longer matches. */
+    onProposeEdit?: (proposedDoc: string, from: { documentId: string | null; base: string }) => boolean;
 }
+
+/** What the chat says when a reply comes back for a document that is no longer in front of the user. */
+const STALE_PROPOSAL =
+    "You switched documents while I was working, so I didn't apply these changes. Ask again from the document you want changed.";
 
 interface UIMessage {
     role: "user" | "assistant";
@@ -30,7 +39,14 @@ interface UIMessage {
 // itself is attached only to the latest turn inside buildAskMessages).
 const MAX_HISTORY_TURNS = 8;
 
-export function AIPanel({ isOpen, onClose, note, fileName, selectionText, aiConfig, hasKey = false, onProposeEdit }: AIPanelProps) {
+export function AIPanel({ isOpen, onClose, note, fileName, selectionText, aiConfig, hasKey = false, documentId = null, onProposeEdit }: AIPanelProps) {
+    // The panel stays mounted across tab switches and edits, and a reply takes
+    // seconds, so `send` reads these at the END of a request rather than trusting
+    // what it closed over at the start.
+    const noteRef = useRef(note);
+    noteRef.current = note;
+    const documentIdRef = useRef(documentId);
+    documentIdRef.current = documentId;
     const [messages, setMessages] = useState<UIMessage[]>([]);
     const [input, setInput] = useState("");
     const [mode, setMode] = useState<"ask" | "agent">("ask");
@@ -81,6 +97,7 @@ export function AIPanel({ isOpen, onClose, note, fileName, selectionText, aiConf
 
         const ctrl = new AbortController();
         abortRef.current = ctrl;
+        const askedAbout = documentIdRef.current;
         try {
             const msgs = mode === "agent"
                 ? buildAgentMessages(history, note, selectionText, text)
@@ -99,13 +116,26 @@ export function AIPanel({ isOpen, onClose, note, fileName, selectionText, aiConf
             // Agent mode: if the reply was edit blocks, apply them and hand the
             // proposed document to the editor for review (replacing the raw blocks
             // that briefly streamed into the bubble with a clean summary).
+            //
+            // Applied to the document as it is NOW, not as it was when asked. The
+            // blocks are search/replace, so anything typed meanwhile survives and a
+            // block whose text moved is reported as not applied. Applying them to the
+            // old text instead would hand the review a document without those edits,
+            // and accepting it would quietly undo them. And never to another tab: a
+            // review of document A's edits shown over document B, accepted, replaces
+            // B with an edited copy of A. AI-06.
             if (mode === "agent") {
-                const res = parseEdits(full, note);
+                const base = noteRef.current;
+                const res = parseEdits(full, base);
                 if (res.hasEdits) {
                     let summary: string;
-                    if (res.applied > 0) {
-                        onProposeEdit?.(res.proposedDoc);
-                        summary = `${res.explanation ? res.explanation + "\n\n" : ""}**Proposed ${res.applied} change${res.applied !== 1 ? "s" : ""}.** Review and Accept/Reject them in the editor.${res.failed ? `\n\n**${res.failed} change${res.failed !== 1 ? "s" : ""} couldn't be applied.** The text may have shifted. Try again.` : ""}`;
+                    if (documentIdRef.current !== askedAbout) {
+                        summary = STALE_PROPOSAL;
+                    } else if (res.applied > 0) {
+                        const shown = onProposeEdit?.(res.proposedDoc, { documentId: askedAbout, base }) ?? false;
+                        summary = shown
+                            ? `${res.explanation ? res.explanation + "\n\n" : ""}**Proposed ${res.applied} change${res.applied !== 1 ? "s" : ""}.** Review and Accept/Reject them in the editor.${res.failed ? `\n\n**${res.failed} change${res.failed !== 1 ? "s" : ""} couldn't be applied.** The text may have shifted. Try again.` : ""}`
+                            : STALE_PROPOSAL;
                     } else {
                         summary = "I drafted changes but none matched the current document (it may have changed since). Please try again.";
                     }
