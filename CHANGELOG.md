@@ -62,6 +62,13 @@ divider is the upstream project's changelog, retained for provenance.
   panel, a reply that sends nothing for two minutes is stopped with a message
   saying so. A slow reply that keeps sending is never cut off, and Stop still
   ends a long one.
+- **Search in files no longer opens a result for a search you cleared.**
+  Clearing the box or closing the panel while a search was still running let
+  its results arrive afterwards and fill the list, and Enter on the empty box
+  opened one of them. A cleared or closed search is now dropped, and Enter
+  opens a match only once the results are for what is in the box. The file
+  explorer had a similar slip: moving between folders quickly could show the
+  previous folder's files under the new one's name.
 - **A save that finishes after you switch tabs updates the right tab.** Saves
   run in the background, and one still in flight when you changed tabs was
   applied to the tab you switched to: that tab could show as unsaved when it
