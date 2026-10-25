@@ -1,6 +1,8 @@
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, LazyLock, Mutex};
 use tauri::ipc::Response;
 use thiserror::Error;
 
@@ -8,6 +10,47 @@ use thiserror::Error;
 /// process. See `save_file`; without it, two saves of one document race each other
 /// through a single temp file and publish a splice of both over the user's document.
 static SAVE_SEQ: AtomicU64 = AtomicU64::new(0);
+
+/// One lock per document with a save in flight, keyed by its canonical path so a
+/// symlink and the file it names share one. See `save_file`.
+type SaveLock = Arc<tokio::sync::Mutex<()>>;
+static SAVE_LOCKS: LazyLock<Mutex<HashMap<PathBuf, SaveLock>>> = LazyLock::new(Default::default);
+
+fn save_lock(key: &Path) -> SaveLock {
+    let mut locks = SAVE_LOCKS.lock().unwrap_or_else(|e| e.into_inner());
+    locks.entry(key.to_path_buf()).or_default().clone()
+}
+
+/// Drop the map's entry once nobody else holds or waits on it. The count is only
+/// ever raised under the map lock, so reading it there is not a race: 2 means the
+/// map and this caller, and no other save of the document is queued.
+fn release_save_lock(key: &Path, lock: SaveLock) {
+    let mut locks = SAVE_LOCKS.lock().unwrap_or_else(|e| e.into_inner());
+    if Arc::strong_count(&lock) == 2 {
+        locks.remove(key);
+    }
+}
+
+/// Where a save of `path` really lands, and the key its lock goes under.
+///
+/// A symlink is followed to the file it names. Renaming the temp file over the
+/// link itself would replace the link with a plain file: the save would appear to
+/// work, and the file the link pointed at would silently stop receiving edits.
+/// A link that leads nowhere is replaced as before, since there is nothing to
+/// follow. Any other path is written as given.
+async fn save_target(path: &str) -> (PathBuf, PathBuf) {
+    let given = PathBuf::from(path);
+    let canonical = tokio::fs::canonicalize(&given).await.ok();
+    let is_link = tokio::fs::symlink_metadata(&given)
+        .await
+        .map(|m| m.file_type().is_symlink())
+        .unwrap_or(false);
+    let target = match (&canonical, is_link) {
+        (Some(c), true) => c.clone(),
+        _ => given.clone(),
+    };
+    (target, canonical.unwrap_or(given))
+}
 
 /// Hard ceiling on text-file content. 50 MB easily covers any sane markdown
 /// document while keeping a single careless `read_file` from holding hundreds
@@ -205,6 +248,18 @@ pub async fn read_file(path: String) -> Result<FileData, CommandError> {
 /// no longer truncate the user's document — the worst case is a leftover
 /// `.dumont-tmp` file. (std/tokio rename replaces the target on Windows
 /// via MoveFileEx + MOVEFILE_REPLACE_EXISTING, and is atomic on POSIX.)
+///
+/// Saves of one document run one at a time, in the order they arrive. A unique
+/// temp file per call keeps two saves from splicing each other, but not from
+/// finishing out of order: a slow save of the older text (a big file, a slow
+/// fsync) could rename AFTER a newer one and put the stale version back on disk,
+/// with both reporting success. The lock is held from the line-ending check to the
+/// rename. Pinned by `a_save_waits_for_the_one_already_writing_the_document`.
+///
+/// Replacing the file this way would also reset it to default permissions, so on
+/// Unix the temp file takes the original's mode before the rename: a note kept at
+/// 0600 must not come back 0644. Hard links still lose their identity; a save
+/// gives the path a new file, as with most editors' atomic saves.
 #[tauri::command]
 pub async fn save_file(path: String, content: String) -> Result<u64, CommandError> {
     // Mirror the read-side limit. Refusing to write a >50 MB markdown file
@@ -218,14 +273,27 @@ pub async fn save_file(path: String, content: String) -> Result<u64, CommandErro
         )));
     }
 
+    let (target, key) = save_target(&path).await;
+    let lock = save_lock(&key);
+    let result = {
+        let _turn = lock.lock().await;
+        write_document(&path, &target, content).await
+    };
+    release_save_lock(&key, lock);
+    result
+}
+
+/// The body of `save_file`, run while holding the document's save lock. `path` is
+/// what the frontend asked for; `target` is where the bytes go (see `save_target`).
+async fn write_document(path: &str, target: &Path, content: String) -> Result<u64, CommandError> {
     // Preserve the on-disk file's line ending. The editor hands us `\n`-only
     // content; if the existing file uses CRLF we write CRLF back, so opening and
     // saving a Windows file doesn't rewrite every line and produce a noisy diff.
     // A brand-new file (save-as / new note) has no existing EOL, so we keep the
     // editor's LF. EOL-01.
-    let file_exists = PathBuf::from(&path).exists();
+    let file_exists = target.exists();
     let content = if file_exists {
-        apply_eol(&content, detect_file_eol(&path).await)
+        apply_eol(&content, detect_file_eol(path).await)
     } else {
         content
     };
@@ -244,12 +312,13 @@ pub async fn save_file(path: String, content: String) -> Result<u64, CommandErro
     // a SPLICE OF BOTH over the user's document while the other reported a save error
     // for a file it had just helped destroy. Pinned by
     // `two_concurrent_saves_of_one_document_do_not_corrupt_it`.
-    let tmp = format!(
-        "{}.{}.{}.dumont-tmp",
-        path,
+    let mut tmp = target.as_os_str().to_owned();
+    tmp.push(format!(
+        ".{}.{}.dumont-tmp",
         std::process::id(),
         SAVE_SEQ.fetch_add(1, Ordering::Relaxed)
-    );
+    ));
+    let tmp = PathBuf::from(tmp);
 
     // Write, then fsync BEFORE the rename. Without the sync, a crash right after
     // the rename can leave the (renamed) file present but empty/partial on disk,
@@ -271,7 +340,21 @@ pub async fn save_file(path: String, content: String) -> Result<u64, CommandErro
         }
     }
 
-    if let Err(e) = tokio::fs::rename(&tmp, &path).await {
+    // The original's mode, not the umask's. Failing here fails the save: going
+    // ahead would publish the document with wider permissions than it had.
+    #[cfg(unix)]
+    if file_exists {
+        let kept = match tokio::fs::metadata(target).await {
+            Ok(m) => tokio::fs::set_permissions(&tmp, m.permissions()).await,
+            Err(e) => Err(e),
+        };
+        if let Err(e) = kept {
+            let _ = tokio::fs::remove_file(&tmp).await;
+            return Err(CommandError::WriteError(e.to_string()));
+        }
+    }
+
+    if let Err(e) = tokio::fs::rename(&tmp, target).await {
         // Don't leave the temp file behind on failure.
         let _ = tokio::fs::remove_file(&tmp).await;
         return Err(CommandError::WriteError(e.to_string()));
@@ -1037,8 +1120,8 @@ pub fn set_ai_key(key: String) -> Result<(), String> {
 mod tests {
     use super::{
         apply_eol, find_backlinks, is_markdown_path, key_from_password, read_file, read_key_entry, sanitize_image_name,
-        save_file, scan_backlinks, search_markdown_tree, validate_rel_path, wikilinks_in_line,
-        BacklinkResult, CommandError, Eol,
+        save_file, save_lock, save_target, scan_backlinks, search_markdown_tree, validate_rel_path,
+        wikilinks_in_line, BacklinkResult, CommandError, Eol, SAVE_LOCKS,
     };
     use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -1320,6 +1403,89 @@ mod tests {
                 .collect();
             assert!(leftovers.is_empty(), "round {round}: temp files left behind: {leftovers:?}");
         }
+    }
+
+    /// Unique temp files stop two saves splicing each other, but not finishing out of
+    /// order. Without the per-document lock, a slow save of older text could rename
+    /// after a newer one and quietly put the stale version back, with both reporting
+    /// success. So a save must not touch the file while another holds the document.
+    #[test]
+    fn a_save_waits_for_the_one_already_writing_the_document() {
+        let dir = TempDir::new();
+        let path = dir.path().join("note.md");
+        std::fs::write(&path, "old\n").expect("seed");
+        let path_str = path.to_string_lossy().to_string();
+
+        let rt = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .enable_all()
+            .build()
+            .unwrap();
+        rt.block_on(async {
+            let (_, key) = save_target(&path_str).await;
+            let lock = save_lock(&key);
+            let turn = lock.lock().await;
+
+            let p = path_str.clone();
+            let save = tokio::spawn(async move { save_file(p, "new\n".into()).await });
+            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+            assert_eq!(std::fs::read_to_string(&path).unwrap(), "old\n", "saved while another save held the document");
+            assert!(!save.is_finished(), "the save did not wait its turn");
+
+            drop(turn);
+            save.await.unwrap().expect("the queued save succeeds");
+            assert_eq!(std::fs::read_to_string(&path).unwrap(), "new\n");
+        });
+    }
+
+    /// The lock map is not allowed to grow by one entry per file ever saved.
+    #[test]
+    fn a_finished_save_leaves_no_lock_behind() {
+        let dir = TempDir::new();
+        let path = dir.path().join("note.md").to_string_lossy().to_string();
+        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        rt.block_on(async {
+            save_file(path.clone(), "one\n".into()).await.unwrap();
+            let (_, key) = save_target(&path).await;
+            assert!(!SAVE_LOCKS.lock().unwrap().contains_key(&key));
+        });
+    }
+
+    /// Saving through a symlink must update the file it names. Renaming over the link
+    /// replaced it with a plain file, so the save looked fine and the real file
+    /// silently stopped receiving edits.
+    #[cfg(unix)]
+    #[test]
+    fn saving_through_a_symlink_updates_the_file_it_names() {
+        let dir = TempDir::new();
+        let real = dir.path().join("real.md");
+        let link = dir.path().join("link.md");
+        std::fs::write(&real, "old\n").unwrap();
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+
+        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        rt.block_on(save_file(link.to_string_lossy().to_string(), "new\n".into())).unwrap();
+
+        assert!(std::fs::symlink_metadata(&link).unwrap().file_type().is_symlink(), "the link was replaced");
+        assert_eq!(std::fs::read_to_string(&real).unwrap(), "new\n");
+    }
+
+    /// The atomic replace creates a new file, which starts with the umask's mode.
+    /// A note kept private at 0600 must not come back readable by everyone.
+    #[cfg(unix)]
+    #[test]
+    fn a_save_keeps_the_files_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = TempDir::new();
+        let path = dir.path().join("private.md");
+        std::fs::write(&path, "old\n").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+
+        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        rt.block_on(save_file(path.to_string_lossy().to_string(), "new\n".into())).unwrap();
+
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600, "mode came back as {mode:o}");
     }
 
     /// A scratch directory that deletes itself, so a failing assert cannot leave

@@ -19,6 +19,13 @@ divider is the upstream project's changelog, retained for provenance.
   downloads first, then asks to save or discard unsaved changes, the same
   question closing the window asks. Cancel keeps everything open, and the
   downloaded update waits behind a "Restart now" button.
+- **Saving keeps the newest text, the file's permissions, and its symlinks.**
+  Two saves of one document (autosave and Ctrl+S, say) now run one after the
+  other, so a slow older save can no longer land last and put stale text back
+  on disk. On macOS and Linux a save keeps the file's permissions instead of
+  resetting them, so a private note stays private. Saving a note opened through
+  a symlink now updates the file it points to, instead of replacing the link
+  with a separate copy.
 - **Option+Arrow in the editor no longer also switches tabs.** Alt+Left and
   Alt+Right (Option on a Mac) move the caret by word in the editor, and the same
   keypress used to switch to the neighboring tab as well. They now switch tabs
