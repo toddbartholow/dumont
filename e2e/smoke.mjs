@@ -11,7 +11,7 @@
 
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { Key, remote } from "webdriverio";
@@ -92,9 +92,27 @@ async function expectTab(browser, name) {
     await tab.waitForExist({ timeout: WAIT, timeoutMsg: `no tab for ${name}` });
 }
 
-async function step(name, fn) {
+// Where a failing step leaves the window's text and a screenshot. CI uploads it.
+const failures = resolve(process.env.SMOKE_ARTIFACTS ?? join(dir, "artifacts"));
+
+async function step(browser, name, fn) {
     process.stdout.write(`- ${name} ... `);
-    await fn();
+    try {
+        await fn();
+    } catch (err) {
+        console.log("FAILED");
+        mkdirSync(failures, { recursive: true });
+        const slug = name.replace(/[^a-z0-9]+/gi, "-").toLowerCase();
+        await browser
+            .execute(() => document.body.innerText)
+            .then((text) => {
+                writeFileSync(join(failures, `${slug}.txt`), text);
+                console.log(`--- window text ---\n${text}\n---`);
+            })
+            .catch(() => {});
+        await browser.saveScreenshot(join(failures, `${slug}.png`)).catch(() => {});
+        throw err;
+    }
     console.log("ok");
 }
 
@@ -103,14 +121,20 @@ async function run() {
 
     let browser = await launch([file]);
     try {
-        await step("a file passed on the command line opens as a tab", async () => {
+        await step(browser, "a file passed on the command line opens as a tab", async () => {
             await expectTab(browser, "smoke.md");
-            // Reader view is the default.
-            const heading = await browser.$('//h1[normalize-space()="Smoke test"]');
-            await heading.waitForDisplayed({ timeout: WAIT });
+            // Reader view is the default. The heading also holds its copy-link
+            // icon, so match on containment rather than its exact text.
+            await browser.waitUntil(
+                async () => {
+                    const h1 = await browser.$(".markdown-body h1");
+                    return (await h1.isExisting()) && (await h1.getText()).includes("Smoke test");
+                },
+                { timeout: WAIT, timeoutMsg: "the preview never showed the file's heading" },
+            );
         });
 
-        await step("an edit saved with Ctrl+S reaches the disk", async () => {
+        await step(browser, "an edit saved with Ctrl+S reaches the disk", async () => {
             await browser.keys([Key.Ctrl, "e"]);
             const editor = await browser.$(".cm-content");
             await editor.waitForDisplayed({ timeout: WAIT });
@@ -121,7 +145,7 @@ async function run() {
             await waitForDisk(browser, "Saved by the smoke test.");
         });
 
-        await step("closing with unsaved changes asks, and Save writes them", async () => {
+        await step(browser, "closing with unsaved changes asks, and Save writes them", async () => {
             await browser.keys([..." Unsaved tail."]);
             await (await browser.$('button[aria-label="Close"]')).click();
             const dialog = await browser.$('[role="alertdialog"]');
@@ -139,12 +163,12 @@ async function run() {
     // process left behind.
     browser = await launch([]);
     try {
-        await step("a relaunch restores the open tab and its saved text", async () => {
+        await step(browser, "a relaunch restores the open tab and its saved text", async () => {
             await expectTab(browser, "smoke.md");
             await waitForText(browser, "Unsaved tail.");
         });
 
-        await step("closing with nothing unsaved just closes", async () => {
+        await step(browser, "closing with nothing unsaved just closes", async () => {
             await (await browser.$('button[aria-label="Close"]')).click();
             await browser.pause(1_000);
             assert.equal(await browser.$('[role="alertdialog"]').isExisting().catch(() => false), false);
@@ -158,7 +182,7 @@ try {
     await run();
     console.log("Smoke test passed.");
 } catch (err) {
-    console.log("FAILED");
+    console.log("Smoke test failed.");
     console.error(err);
     process.exitCode = 1;
 } finally {

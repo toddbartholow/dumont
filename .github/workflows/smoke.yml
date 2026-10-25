@@ -82,5 +82,14 @@ jobs:
           export XDG_CONFIG_HOME="$RUNNER_TEMP/smoke/config"
           export XDG_DATA_HOME="$RUNNER_TEMP/smoke/data"
           export XDG_CACHE_HOME="$RUNNER_TEMP/smoke/cache"
+          export SMOKE_ARTIFACTS="$RUNNER_TEMP/smoke/failures"
           mkdir -p "$XDG_CONFIG_HOME" "$XDG_DATA_HOME" "$XDG_CACHE_HOME"
           xvfb-run -a dbus-run-session -- node smoke.mjs ../src-tauri/target/release/dumont
+
+      - name: Upload what the failing step saw
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: smoke-failure
+          path: ${{ runner.temp }}/smoke/failures
+          if-no-files-found: ignore
