@@ -638,6 +638,23 @@ describe("App background autosave failures", () => {
         expect(disk.get("/notes/a.md")).toBe("# A\n");
     });
 
+    // A timer can fire a few ms early by Date.now(). The retry used to judge "due" by the clock
+    // at firing, so the tab it was set for read as not yet due, was skipped, and with nothing
+    // written and nothing failed no further retry was ever scheduled. Flaky on Linux CI.
+    it("retries even when the timer fires early by the wall clock", async () => {
+        await failingBackgroundTab();
+        // Let the retry be scheduled, then run the clock 100 ms behind the timers.
+        await act(() => new Promise<void>((r) => setTimeout(r, 200)));
+        const realNow = Date.now.bind(Date);
+        const skew = vi.spyOn(Date, "now").mockImplementation(() => realNow() - 100);
+        try {
+            failSaves.delete("/notes/a.md");
+            await waitFor(() => expect(disk.get("/notes/a.md")).toMatch(/\*\*/), { timeout: 6000 });
+        } finally {
+            skew.mockRestore();
+        }
+    });
+
     it("tries again without the user switching to it", async () => {
         await failingBackgroundTab();
 
