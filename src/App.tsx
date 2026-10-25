@@ -940,10 +940,38 @@ function AppContent() {
   // Autosave 1.5s after the last edit. See useAutosave for the throttling and
   // the AI-review guard (AI-01). Callbacks are memoised so the debounce timer
   // isn't reset on every unrelated re-render.
-  const handleAutosaved = useCallback((mtime: number, saved: string) => {
-    knownMtimeRef.current = mtime;
-    setOriginalContent(saved);
-  }, []);
+  //
+  // A finished save belongs to the tab it was STARTED from, which need not be the one in
+  // front by the time the write comes back. Applied to the live state regardless, A's saved
+  // text became B's baseline (B then read clean or dirty against the wrong document), and a
+  // Save As handed A's new path to B. So the result goes to the tab that asked: the live
+  // state if it is still active, its snapshot if not, and nowhere if it has been closed.
+  const recordSave = useCallback(
+    (tabId: string | null, written: string, mtime: number, as?: { filePath: string; fileName: string }) => {
+      if (tabId !== null && tabId !== activeTabIdRef.current) {
+        commitTabs(markTabSaved(tabsRef.current, tabId, written, mtime, as));
+        return;
+      }
+      knownMtimeRef.current = mtime;
+      setOriginalContent(written);
+      if (as) {
+        setFilePath(as.filePath);
+        setFileName(as.fileName);
+        // Keep the active tab's entry in step with the new path/name so reopening
+        // the just-saved file switches to this tab instead of duplicating it. TABS-01.
+        if (tabId !== null) {
+          commitTabs(tabsRef.current.map((t) => (t.id === tabId ? {
+            ...t, ...as, content: written, originalContent: written, knownMtime: mtime,
+          } : t)));
+        }
+      }
+    },
+    [commitTabs]
+  );
+  const handleAutosaved = useCallback(
+    (mtime: number, saved: string, tabId: string | null) => recordSave(tabId, saved, mtime),
+    [recordSave]
+  );
   const handleAutosaveError = useCallback((msg: string) => showToast(msg, "error"), [showToast]);
   useAutosave({
     enabled: autoSaveEnabled,
@@ -951,6 +979,7 @@ function AppContent() {
     content,
     originalContent,
     isReviewActive: proposedDoc != null,
+    documentId: activeTabId,
     onSaved: handleAutosaved,
     onError: handleAutosaveError,
   });
@@ -1413,35 +1442,27 @@ function AppContent() {
   // staler than the closure it replaces.
   const handleSaveAs = useCallback(async () => {
     const { content: live, fileName: liveName } = liveRef.current;
+    // Taken BEFORE the dialog and the write: both await, and the tab in front afterwards
+    // need not be the one being saved (see recordSave).
+    const tabId = activeTabIdRef.current;
     const selected = await save({
       filters: [{ name: "Markdown", extensions: ["md"] }],
       defaultPath: liveName ?? undefined,
     });
     if (!selected) return;
     try {
-      knownMtimeRef.current = await saveDocument(selected, live);
-      setFilePath(selected);
+      const mtime = await saveDocument(selected, live);
       const name = selected.replace(/\\/g, "/").split("/").pop() || "Untitled";
-      setFileName(name);
-      setOriginalContent(live);
+      recordSave(tabId, live, mtime, { filePath: selected, fileName: name });
       addRecentFile(selected, name);
       setLastFile(selected);
-      // Keep the active tab's entry in step with the new path/name so reopening
-      // the just-saved file switches to this tab instead of duplicating it. TABS-01.
-      const activeId = activeTabIdRef.current;
-      if (activeId) {
-        commitTabs(tabsRef.current.map((t) => (t.id === activeId ? {
-          ...t, filePath: selected, fileName: name, content: live, originalContent: live,
-          knownMtime: knownMtimeRef.current,
-        } : t)));
-      }
       showToast("File saved", "success");
     } catch (err) {
       console.error("Failed to save file:", err);
       const msg = errMessage(err);
       showToast(msg || "Failed to save file", "error");
     }
-  }, [showToast, commitTabs]);
+  }, [showToast, recordSave]);
 
   // Save file (Save As if no path yet). Reads the live buffer from liveRef for the same
   // reason handleSaveAs does: this callback is what the command palette's memo hangs off,
@@ -1452,16 +1473,16 @@ function AppContent() {
       await handleSaveAs();
       return;
     }
+    const tabId = activeTabIdRef.current;
     try {
-      knownMtimeRef.current = await saveDocument(path, live);
-      setOriginalContent(live);
+      recordSave(tabId, live, await saveDocument(path, live));
       showToast("File saved", "success");
     } catch (err) {
       console.error("Failed to save file:", err);
       const msg = errMessage(err);
       showToast(msg || "Failed to save file", "error");
     }
-  }, [showToast, handleSaveAs]);
+  }, [showToast, handleSaveAs, recordSave]);
 
   // Runtime file-open forwards. Cold-start CLI files are handled by the pull
   // in the boot effect above; this event now arrives only from the

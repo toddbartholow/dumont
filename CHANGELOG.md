@@ -32,6 +32,11 @@ divider is the upstream project's changelog, retained for provenance.
   document. The assistant now leaves them unapplied and says why. Text typed
   into the same document while it worked is kept: the edits are applied to
   the document as it is when the reply arrives.
+- **A save that finishes after you switch tabs updates the right tab.** Saves
+  run in the background, and one still in flight when you changed tabs was
+  applied to the tab you switched to: that tab could show as unsaved when it
+  was not, and a Save As could give it the other document's name and path.
+  The result now goes to the tab that was saved.
 - **Option+Arrow in the editor no longer also switches tabs.** Alt+Left and
   Alt+Right (Option on a Mac) move the caret by word in the editor, and the same
   keypress used to switch to the neighboring tab as well. They now switch tabs

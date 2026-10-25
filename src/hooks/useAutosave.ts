@@ -16,8 +16,12 @@ export interface UseAutosaveOptions {
    * edits the user explicitly rejected, so autosave must stay parked. AI-01.
    */
   isReviewActive: boolean;
-  /** Called after a successful write with the new mtime and the saved content. */
-  onSaved: (mtime: number, content: string) => void;
+  /** Which open document this is (the tab id). Handed back to `onSaved` because a write can
+   *  finish after the user has switched tabs, and the result belongs to this one. */
+  documentId?: string | null;
+  /** Called after a successful write with the new mtime, the saved content, and the
+   *  `documentId` the save was made for. */
+  onSaved: (mtime: number, content: string, documentId: string | null) => void;
   /** Called when a write fails (already throttled to at most once per 30s). */
   onError: (message: string) => void;
 }
@@ -43,6 +47,7 @@ export function useAutosave({
   content,
   originalContent,
   isReviewActive,
+  documentId = null,
   onSaved,
   onError,
 }: UseAutosaveOptions): void {
@@ -57,7 +62,7 @@ export function useAutosave({
         // per 1.5 s of typing, an un-coalesced history would hold the last ninety
         // seconds of the document and nothing else. See src-tauri/src/history.rs.
         const mtime = await saveDocument(filePath, content);
-        onSaved(mtime, content);
+        onSaved(mtime, content, documentId);
         lastErrorRef.current = 0;
       } catch (err) {
         const now = Date.now();
@@ -69,5 +74,5 @@ export function useAutosave({
       }
     }, AUTOSAVE_DELAY_MS);
     return () => window.clearTimeout(id);
-  }, [enabled, filePath, content, originalContent, isReviewActive, onSaved, onError]);
+  }, [enabled, filePath, content, originalContent, isReviewActive, documentId, onSaved, onError]);
 }

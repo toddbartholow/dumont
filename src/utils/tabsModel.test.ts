@@ -382,8 +382,31 @@ describe("markTabSaved", () => {
     const next = markTabSaved(tabs, "1", "what we actually wrote", 999);
 
     expect(next[0].content).toBe("what the user typed DURING the save");
-    expect(next[0].originalContent).toBe("old"); // still dirty, so it will be saved again
+    expect(isTabDirty(next[0])).toBe(true); // still dirty, so it will be saved again
+    // ...against what is really on disk now, at the mtime the save produced, so the next
+    // focus check does not take the app's own write for someone else's.
+    expect(next[0].originalContent).toBe("what we actually wrote");
+    expect(next[0].knownMtime).toBe(999);
+  });
+
+  // The old version left the tab's baseline at the PREVIOUS save. Type the text back to that
+  // and the tab read clean, while the file held the newer write: the editor and the disk
+  // disagreed and nothing would ever save the difference.
+  it("keeps a tab dirty when its text is put back to the version before the save", () => {
+    const tabs = [tab("1", "/a.md", "old", "old")];
+
+    const next = markTabSaved(tabs, "1", "what we actually wrote", 999);
+
     expect(isTabDirty(next[0])).toBe(true);
+  });
+
+  it("moves the tab on a Save As", () => {
+    const tabs = [tab("1", null, "draft", "")];
+
+    const next = markTabSaved(tabs, "1", "draft", 5, { filePath: "/n/kept.md", fileName: "kept.md" });
+
+    expect(next[0]).toMatchObject({ filePath: "/n/kept.md", fileName: "kept.md", originalContent: "draft", knownMtime: 5 });
+    expect(isTabDirty(next[0])).toBe(false);
   });
 
   it("leaves every other tab alone", () => {
