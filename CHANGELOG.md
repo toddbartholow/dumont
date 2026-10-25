@@ -26,6 +26,12 @@ divider is the upstream project's changelog, retained for provenance.
   resetting them, so a private note stays private. Saving a note opened through
   a symlink now updates the file it points to, instead of replacing the link
   with a separate copy.
+- **AI edits stay with the document they were asked about.** Switching tabs
+  while the assistant was drafting edits used to show those edits over the
+  new tab, and accepting them replaced it with a changed copy of the other
+  document. The assistant now leaves them unapplied and says why. Text typed
+  into the same document while it worked is kept: the edits are applied to
+  the document as it is when the reply arrives.
 - **Option+Arrow in the editor no longer also switches tabs.** Alt+Left and
   Alt+Right (Option on a Mac) move the caret by word in the editor, and the same
   keypress used to switch to the neighboring tab as well. They now switch tabs

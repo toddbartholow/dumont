@@ -1516,10 +1516,17 @@ function AppContent() {
 
   // Agent proposed an edited document → show it as a diff to accept/reject.
   // Ensure the editor (where the diff renders) is visible.
-  const handleProposeEdit = useCallback((doc: string) => {
+  //
+  // Only over the document the edits were made from. The panel already checks the
+  // tab, but the review is a replacement of the whole buffer, so it is checked
+  // again at the one place that can show it: wrong tab, or text that moved since
+  // the edits were applied, and the proposal is refused rather than shown. AI-06.
+  const handleProposeEdit = useCallback((doc: string, from: { documentId: string | null; base: string }) => {
+    if (from.documentId !== activeTabIdRef.current || from.base !== liveRef.current.content) return false;
     setProposedDoc(doc);
     setReviewLabel(AI_REVIEW_LABEL);
     setMode((m) => (m === "preview" ? "split" : m));
+    return true;
   }, [setMode]);
 
   // Review finished: commit the accepted document (or keep the original on reject).
@@ -2070,6 +2077,7 @@ function AppContent() {
                 selectionText={content.slice(selectionRange.start, selectionRange.end)}
                 aiConfig={aiConfig}
                 hasKey={hasAiKey}
+                documentId={activeTabId}
                 onProposeEdit={handleProposeEdit}
               />
             </Suspense>
