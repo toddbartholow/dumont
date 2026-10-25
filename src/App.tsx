@@ -550,13 +550,17 @@ function AppContent() {
     }
   }, []);
 
-  const loadFileDirect = useCallback(async (path: string) => {
+  // `stillWanted`, if given, is asked once the read has come back, and a false answer drops the
+  // result: the external-change watcher uses it so a reload judged safe before the read cannot
+  // land on a buffer the user typed into during it. Resolves to whether the file was installed.
+  const loadFileDirect = useCallback(async (path: string, stillWanted?: () => boolean): Promise<boolean> => {
     const outgoing = filePathRef.current;
     // Preserve the file we're leaving in its tab before overwriting live state.
     snapshotActiveTab();
     setIsLoading(true);
     try {
       const fileData = await invoke<FileData>("read_file", { path });
+      if (stillWanted && !stillWanted()) return false;
       bumpDocSwap(); // new document → editor resets undo history. TABS-03.
       setFilePath(fileData.path);
       setFileName(fileData.name);
@@ -597,6 +601,7 @@ function AppContent() {
       // editing session back to preview. New files still force code mode
       // (handleNewFile). READ-01.
       if (outgoing !== fileData.path && settingsRef.current["files.openInReader"]) setMode("preview");
+      return true;
     } catch (err) {
       console.error("Failed to load file:", err);
       // Surface the actual error from Rust so "File too large" / "File not
@@ -604,6 +609,7 @@ function AppContent() {
       // hitting the new 50 MB cap looked exactly like a permission error.
       const msg = errMessage(err);
       showToast(msg || "Failed to open file", "error");
+      return false;
     } finally {
       setIsLoading(false);
     }
@@ -1030,6 +1036,13 @@ function AppContent() {
           if (decision.action === "none") continue;
           if (decision.action === "reload") {
             const fd = await invoke<FileData>("read_file", { path: t.filePath! });
+            // `t` was judged clean before two awaits. Judge again: the tab may have been
+            // closed, brought to the front (its live state is then the truth, not this
+            // snapshot), or typed into, and a reload now would replace those edits.
+            const now = tabsRef.current.find((x) => x.id === t.id);
+            if (!now || now.id === activeTabIdRef.current || now.content !== t.content || now.originalContent !== t.originalContent) {
+              continue;
+            }
             commitTabs(
               tabsRef.current.map((x) =>
                 x.id === t.id
