@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeAll, beforeEach } from "vitest";
-import { render, screen, waitFor, fireEvent, act } from "@testing-library/react";
+import { render, screen, waitFor, fireEvent, act, within } from "@testing-library/react";
 import { installCodeMirrorDomPolyfills } from "./test/codemirrorDom";
 import { TestProviders } from "./test/providers";
 
@@ -288,7 +288,7 @@ describe("App update restart", () => {
         const upd = await untitledDirtyWithUpdate();
         nextSavePath = "/notes/kept.md";
 
-        fireEvent.click(screen.getByRole("button", { name: "Save" }));
+        fireEvent.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Save" }));
 
         await waitFor(() => expect(upd.install).toHaveBeenCalledTimes(1));
         expect(disk.get("/notes/kept.md")).toMatch(/\*\*/);
@@ -300,7 +300,7 @@ describe("App update restart", () => {
         const upd = await untitledDirtyWithUpdate();
         nextSavePath = null;
 
-        fireEvent.click(screen.getByRole("button", { name: "Save" }));
+        fireEvent.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Save" }));
 
         expect(await screen.findByRole("button", { name: "Restart now" })).toBeTruthy();
         expect(upd.install).not.toHaveBeenCalled();
@@ -683,5 +683,74 @@ describe("App background autosave failures", () => {
 
         expect(event.preventDefault).toHaveBeenCalled();
         expect(await screen.findByText(/save them before closing/i)).toBeTruthy();
+    });
+});
+
+/**
+ * The title bar's Save and Save As are the only visible way to save off macOS, where the
+ * window has no File menu. Everything here is done with the mouse. SAVE-04.
+ */
+describe("App title bar saving", () => {
+    const click = (name: string | RegExp) =>
+        act(async () => {
+            fireEvent.click(screen.getByRole("button", { name }));
+        });
+    const bold = async () => {
+        await act(async () => {
+            fireEvent.click(await screen.findByRole("button", { name: /bold/i }));
+        });
+        await waitFor(() => expect(screen.queryByLabelText("File has unsaved changes")).not.toBeNull());
+    };
+
+    it("saves a new note where the user picks", async () => {
+        boot();
+        // Ctrl+N, not the welcome screen's New File: boot runs once per module (bootResolved),
+        // so after the first test in this file the welcome screen never replaces the splash.
+        // The save, the part under test, is still the mouse's.
+        await press({ key: "n", ctrlKey: true });
+        await bold();
+        nextSavePath = "/notes/fresh.md";
+
+        await click("Save");
+
+        await waitFor(() => expect(disk.get("/notes/fresh.md")).toMatch(/\*\*/));
+        expect(screen.getAllByRole("tab").some((t) => /fresh\.md/.test(t.textContent ?? ""))).toBe(true);
+    });
+
+    it("saves an edited file in place, without asking where", async () => {
+        boot();
+        await openViaDialog("/notes/a.md", "# A\n");
+        await makeDirty();
+
+        await click("Save");
+
+        await waitFor(() => expect(disk.get("/notes/a.md")).toMatch(/\*\*/));
+        expect(dialog.save).not.toHaveBeenCalled();
+        await waitFor(() => expect(screen.queryByLabelText("File has unsaved changes")).toBeNull());
+    });
+
+    it("Save As writes a copy under the new name", async () => {
+        boot();
+        await openViaDialog("/notes/a.md", "# A\n");
+        await makeDirty();
+        nextSavePath = "/notes/copy.md";
+
+        await click("Save As");
+
+        await waitFor(() => expect(disk.get("/notes/copy.md")).toMatch(/\*\*/));
+        expect(disk.get("/notes/a.md")).toBe("# A\n");
+    });
+
+    it("a cancelled Save As writes nothing and keeps the edits", async () => {
+        boot();
+        await openViaDialog("/notes/a.md", "# A\n");
+        await makeDirty();
+        nextSavePath = null;
+
+        await click("Save As");
+
+        await waitFor(() => expect(dialog.save).toHaveBeenCalled());
+        expect(invoke.mock.calls.some(([cmd]) => cmd === "save_file")).toBe(false);
+        expect(screen.queryByLabelText("File has unsaved changes")).not.toBeNull();
     });
 });

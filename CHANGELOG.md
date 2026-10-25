@@ -11,6 +11,13 @@ divider is the upstream project's changelog, retained for provenance.
 
 ## [Unreleased]
 
+### Added
+
+- **Save and Save As buttons in the title bar.** On Windows and Linux there is
+  no File menu, so saving meant knowing Ctrl+S, finding it in the command
+  palette, or waiting for the prompt on close. The buttons sit beside New and
+  Open, and their tooltips give the shortcuts.
+
 ### Fixed
 
 - **Updating no longer discards unsaved work.** "Update now" installed and
