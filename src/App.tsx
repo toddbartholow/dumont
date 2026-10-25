@@ -98,10 +98,11 @@ import { errMessage } from "./utils/errors";
 import { revealMainWindow } from "./utils/appWindow";
 // Every write to a document goes through saveDocument, which is also what records
 // a version-history snapshot. See src/utils/saveDocument.ts for the one exception.
-import { saveDocument } from "./utils/saveDocument";
+import { isConflictError, saveDocument } from "./utils/saveDocument";
 import { saveThenClose } from "./utils/saveCloseTab";
 import { setHistoryConfig } from "./utils/history";
 import { TabBar, type TabBarItem } from "./components/TabBar";
+import { ConflictBar } from "./components/ConflictBar";
 import { TabContextMenu } from "./components/TabContextMenu";
 import {
   findTabByPath,
@@ -211,6 +212,26 @@ function AppContent() {
   // the snapshots of every open file (incl. the active one). TABS-01.
   const [tabs, setTabs] = useState<TabState[]>([]);
   const [activeTabId, setActiveTabId] = useState<string | null>(null);
+  // Tabs whose file changed on disk while they held edits of their own. Neither version is
+  // obviously the one to keep, so autosave skips these until the user picks one. EXT-03.
+  const [conflictedTabs, setConflictedTabs] = useState<ReadonlySet<string>>(() => new Set());
+  const conflictedTabsRef = useRef(conflictedTabs);
+  conflictedTabsRef.current = conflictedTabs;
+  const markConflicted = useCallback((id: string | null) => {
+    if (id === null) return;
+    setConflictedTabs((s) => (s.has(id) ? s : new Set(s).add(id)));
+  }, []);
+  const clearConflict = useCallback((id: string | null) => {
+    if (id === null) return;
+    setConflictedTabs((s) => {
+      if (!s.has(id)) return s;
+      const next = new Set(s);
+      next.delete(id);
+      return next;
+    });
+  }, []);
+  // Bumped by Ctrl+S on a conflicted tab, to move focus to the choice it has to make first.
+  const [conflictFocus, setConflictFocus] = useState(0);
   // Bumped on every genuine document swap (tab switch, file open, new file) so
   // the editor can reset its undo history and Ctrl+Z can't reach into the
   // previously-shown document. See CodeEditor's docSwapId effect. TABS-03.
@@ -908,7 +929,7 @@ function AppContent() {
         // process dies is simply lost. That would make the version saved on the way
         // out, the last one the user ever wrote, the one version reliably absent from
         // its own history. Nothing is racing us for latency here; the app is quitting.
-        await saveDocument(path, t.content, true);
+        await saveDocument(path, t.content, { awaitSnapshot: true });
       } catch (err) {
         const msg = errMessage(err);
         showToast(msg || `Failed to save ${t.fileName}`, "error");
@@ -925,15 +946,18 @@ function AppContent() {
   }, [proceedPastUnsaved, hideModal]);
 
   // External-change detection: on window focus, stat the open file and reload
-  // (clean buffer) or warn (dirty buffer). EXT-01. Callbacks are memoised so the
-  // focus listener stays registered across renders.
+  // (clean buffer) or mark it conflicted (dirty buffer). EXT-01. Callbacks are memoised so
+  // the focus listener stays registered across renders.
   const handleExternalReloaded = useCallback(
     () => showToast("File changed on disk, reloaded the latest version", "info"),
     [showToast]
   );
+  // The watcher only reports a conflict for the document still in front (EXT-02), so the
+  // active tab is the one it means. The ConflictBar that appears is the message; it used to
+  // be a toast saying a save would overwrite, while autosave went ahead and did. EXT-03.
   const handleExternalConflict = useCallback(
-    () => showToast("This file changed on disk. Saving will overwrite those changes.", "error"),
-    [showToast]
+    () => markConflicted(activeTabIdRef.current),
+    [markConflicted]
   );
   useExternalChangeWatcher({
     filePathRef, contentRef, originalContentRef, knownMtimeRef,
@@ -979,6 +1003,7 @@ function AppContent() {
     [recordSave]
   );
   const handleAutosaveError = useCallback((msg: string) => showToast(msg, "error"), [showToast]);
+  const getKnownMtime = useCallback(() => knownMtimeRef.current, []);
   useAutosave({
     enabled: autoSaveEnabled,
     filePath,
@@ -988,6 +1013,9 @@ function AppContent() {
     documentId: activeTabId,
     onSaved: handleAutosaved,
     onError: handleAutosaveError,
+    getKnownMtime,
+    isConflicted: activeTabId !== null && conflictedTabs.has(activeTabId),
+    onConflict: markConflicted,
   });
 
   // Autosave dirty BACKGROUND tabs too (useAutosave above only covers the active
@@ -998,19 +1026,26 @@ function AppContent() {
   // the effect settles without looping. TABS-06.
   useEffect(() => {
     if (!autoSaveEnabled) return;
-    const dirtyBg = backgroundTabsToAutosave(tabs, activeTabIdRef.current);
+    const dirtyBg = backgroundTabsToAutosave(tabs, activeTabIdRef.current).filter((t) => !conflictedTabs.has(t.id));
     if (dirtyBg.length === 0) return;
     const timer = window.setTimeout(async () => {
       let wrote = false;
       for (const t of dirtyBg) {
         try {
-          const mtime = await saveDocument(t.filePath!, t.content);
+          const mtime = await saveDocument(t.filePath!, t.content, { expectedMtime: t.knownMtime });
           // markTabSaved refuses to mark it clean if its content moved while the write was in
           // flight: the user can switch to a background tab and type into it mid-save, and
           // calling that saved would quietly lose what they typed.
           commitTabs(markTabSaved(tabsRef.current, t.id, t.content, mtime));
           wrote = true;
-        } catch {/* best-effort; the active-tab path surfaces disk errors */}
+        } catch (err) {
+          // Someone else wrote the file since this tab last read it. EXT-03.
+          if (isConflictError(err)) {
+            markConflicted(t.id);
+            showToast(`"${t.fileName}" changed on disk in a background tab. Its autosave is paused until you choose which version to keep.`, "error");
+          }
+          // Anything else is best-effort; the active-tab path surfaces disk errors.
+        }
       }
       // A background tab that just landed on disk may be the thing that links
       // here, so the backlinks panel has to re-scan. Nothing else would tell it:
@@ -1018,13 +1053,13 @@ function AppContent() {
       if (wrote) bumpSaved();
     }, 1500);
     return () => window.clearTimeout(timer);
-  }, [tabs, autoSaveEnabled, commitTabs, bumpSaved]);
+  }, [tabs, conflictedTabs, autoSaveEnabled, commitTabs, bumpSaved, markConflicted, showToast]);
 
   // External-change detection for BACKGROUND tabs. The active tab is handled by
   // useExternalChangeWatcher; on window focus we also stat every other open
   // file. A clean background tab silently refreshes its snapshot; a dirty one
-  // gets a one-time conflict warning (its knownMtime is advanced so it won't
-  // re-toast every focus). TABS-06.
+  // is marked conflicted, which parks its autosave, and gets a one-time warning (its
+  // knownMtime is advanced so it won't re-toast every focus). TABS-06, EXT-03.
   useEffect(() => {
     const onFocus = async () => {
       const activeId = activeTabIdRef.current;
@@ -1052,14 +1087,15 @@ function AppContent() {
             );
           } else {
             commitTabs(tabsRef.current.map((x) => (x.id === t.id ? { ...x, knownMtime: info.modified } : x)));
-            showToast(`"${t.fileName}" changed on disk in a background tab. Saving it will overwrite those changes.`, "error");
+            markConflicted(t.id);
+            showToast(`"${t.fileName}" changed on disk in a background tab. Its autosave is paused until you choose which version to keep.`, "error");
           }
         } catch {/* file gone / stat failed — surfaced when that tab is saved */}
       }
     };
     window.addEventListener("focus", onFocus);
     return () => window.removeEventListener("focus", onFocus);
-  }, [commitTabs, showToast]);
+  }, [commitTabs, showToast, markConflicted]);
 
   // Persist the whole open-tab session (paths + which is active) so a relaunch
   // reopens everything, not just one file. Runs whenever the tab list or the
@@ -1130,6 +1166,7 @@ function AppContent() {
     const nextId = nextActiveAfterClose(tabsRef.current, id);
     const remaining = tabsRef.current.filter((t) => t.id !== id);
     commitTabs(remaining);
+    clearConflict(id);
     if (!isActive) return;
     const target = nextId ? remaining.find((t) => t.id === nextId) : undefined;
     if (target) {
@@ -1148,7 +1185,7 @@ function AppContent() {
       knownMtimeRef.current = 0;
       setLastFile(null);
     }
-  }, [commitTabs, setActiveTab, applyTabToLive, bumpDocSwap]);
+  }, [commitTabs, setActiveTab, applyTabToLive, bumpDocSwap, clearConflict]);
 
   // Close a tab. A clean tab closes immediately; a dirty one opens the
   // Save / Discard / Cancel dialog (TABS-05) rather than the old two-button
@@ -1467,6 +1504,8 @@ function AppContent() {
       const mtime = await saveDocument(selected, live);
       const name = selected.replace(/\\/g, "/").split("/").pop() || "Untitled";
       recordSave(tabId, live, mtime, { filePath: selected, fileName: name });
+      // The buffer belongs to the new path now; whatever happened to the old one is moot.
+      clearConflict(tabId);
       addRecentFile(selected, name);
       setLastFile(selected);
       showToast("File saved", "success");
@@ -1475,11 +1514,15 @@ function AppContent() {
       const msg = errMessage(err);
       showToast(msg || "Failed to save file", "error");
     }
-  }, [showToast, recordSave]);
+  }, [showToast, recordSave, clearConflict]);
 
   // Save file (Save As if no path yet). Reads the live buffer from liveRef for the same
   // reason handleSaveAs does: this callback is what the command palette's memo hangs off,
   // so closing over `content` made that memo rebuild on every keystroke.
+  //
+  // It checks the disk too (EXT-03). A change made while the window kept focus is never seen
+  // by the focus watcher, and Ctrl+S is a habit, not a decision to overwrite someone else's
+  // edit. On a tab already known to be conflicted it goes to the bar, which asks.
   const handleSaveFile = useCallback(async () => {
     const { filePath: path, content: live } = liveRef.current;
     if (!path) {
@@ -1487,15 +1530,48 @@ function AppContent() {
       return;
     }
     const tabId = activeTabIdRef.current;
+    if (tabId !== null && conflictedTabsRef.current.has(tabId)) {
+      setConflictFocus((n) => n + 1);
+      return;
+    }
     try {
-      recordSave(tabId, live, await saveDocument(path, live));
+      recordSave(tabId, live, await saveDocument(path, live, { expectedMtime: knownMtimeRef.current }));
       showToast("File saved", "success");
     } catch (err) {
+      if (isConflictError(err)) {
+        markConflicted(tabId);
+        return;
+      }
       console.error("Failed to save file:", err);
       const msg = errMessage(err);
       showToast(msg || "Failed to save file", "error");
     }
-  }, [showToast, handleSaveAs, recordSave]);
+  }, [showToast, handleSaveAs, recordSave, markConflicted]);
+
+  // The two ways out of a conflict, from the ConflictBar. Both act on the tab in front, which
+  // is the only one the bar is ever drawn for. EXT-03.
+  const handleConflictReload = useCallback(async () => {
+    const tabId = activeTabIdRef.current;
+    const path = liveRef.current.filePath;
+    if (tabId === null || !path) return;
+    // loadFileDirect reuses this tab for the same path and installs the file as its baseline.
+    if (await loadFileDirect(path)) clearConflict(tabId);
+  }, [loadFileDirect, clearConflict]);
+  const handleConflictKeepMine = useCallback(async () => {
+    const tabId = activeTabIdRef.current;
+    const { filePath: path, content: live } = liveRef.current;
+    if (tabId === null || !path) return;
+    try {
+      // No expected mtime: overwriting what is on disk is exactly what was asked for.
+      recordSave(tabId, live, await saveDocument(path, live));
+      clearConflict(tabId);
+      bumpSaved();
+      showToast("File saved", "success");
+    } catch (err) {
+      console.error("Failed to save file:", err);
+      showToast(errMessage(err) || "Failed to save file", "error");
+    }
+  }, [recordSave, clearConflict, bumpSaved, showToast]);
 
   // Runtime file-open forwards. Cold-start CLI files are handled by the pull
   // in the boot effect above; this event now arrives only from the
@@ -1911,6 +1987,14 @@ function AppContent() {
           onNewTab={handleNewFile}
           onReorder={handleReorderTab}
           onContextMenu={handleTabContextMenu}
+        />
+      )}
+      {hasFile && activeTabId !== null && conflictedTabs.has(activeTabId) && (
+        <ConflictBar
+          fileName={fileName ?? "This file"}
+          onReload={handleConflictReload}
+          onKeepMine={handleConflictKeepMine}
+          focusSignal={conflictFocus}
         />
       )}
 

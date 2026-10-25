@@ -39,6 +39,14 @@ divider is the upstream project's changelog, retained for provenance.
   could be replaced by the version on disk. The reload is now dropped instead,
   and you get the usual "changed on disk" warning. Switching tabs while the
   check runs no longer reloads the wrong file.
+- **Autosave no longer overwrites a file another program changed.** When a
+  file changed on disk while you had unsaved edits in it, Dumont warned that
+  saving would overwrite the other version, then autosaved over it anyway a
+  moment later. A change made while Dumont kept focus was not noticed at all.
+  Every autosave and Ctrl+S now checks that the file is still the version it
+  last read or saved. If it is not, nothing is written: a bar above the editor
+  offers "Reload from disk" or "Keep my version", and autosave waits for that
+  choice. Background tabs get the same check.
 - **A save that finishes after you switch tabs updates the right tab.** Saves
   run in the background, and one still in flight when you changed tabs was
   applied to the tab you switched to: that tab could show as unsaved when it

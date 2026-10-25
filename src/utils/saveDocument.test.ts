@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, type Mock } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
-import { saveDocument } from "./saveDocument";
+import { isConflictError, saveDocument } from "./saveDocument";
 import { setHistoryConfig, HISTORY_CHANGED_EVENT } from "./history";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
@@ -91,5 +91,22 @@ describe("saveDocument", () => {
     await expect(saveDocument("/notes/a.md", "hello")).rejects.toBe(
       "Document is 60 MB; maximum is 50 MB",
     );
+  });
+
+  // EXT-03.
+  it("passes an expected mtime through, and leaves out an unknown one", async () => {
+    await saveDocument("/notes/a.md", "hello", { expectedMtime: 42 });
+    expect(mockInvoke).toHaveBeenCalledWith("save_file", { path: "/notes/a.md", content: "hello", expectedMtime: 42 });
+    mockInvoke.mockClear();
+    // Zero is "never knew it", which is no basis for refusing a save.
+    await saveDocument("/notes/a.md", "hello", { expectedMtime: 0 });
+    expect(mockInvoke).toHaveBeenCalledWith("save_file", { path: "/notes/a.md", content: "hello" });
+  });
+
+  it("tells a refused save apart from any other failure", () => {
+    expect(isConflictError("File changed on disk: /notes/a.md")).toBe(true);
+    expect(isConflictError(new Error("File changed on disk: /notes/a.md"))).toBe(true);
+    expect(isConflictError("Permission denied: /notes/a.md")).toBe(false);
+    expect(isConflictError(null)).toBe(false);
   });
 });
