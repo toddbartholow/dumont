@@ -176,8 +176,25 @@ async function run() {
 
         await step(browser, "closing with nothing unsaved just closes", async () => {
             await (await browser.$('button[aria-label="Close"]')).click();
-            await browser.pause(1_000);
-            assert.equal(await browser.$('[role="alertdialog"]').isExisting().catch(() => false), false);
+            // The app quitting takes the page with it, so the first WebDriver call
+            // to fail is the proof it closed. webdriver logs that failure as an
+            // ERROR ("session deleted because of page crash or hang"); here it is
+            // the expected outcome. A dialog instead means it asked for no reason.
+            // waitUntil retries a condition that throws, so record the outcome and
+            // assert after it.
+            let outcome = "running";
+            await browser.waitUntil(
+                async () => {
+                    try {
+                        if (await browser.$('[role="alertdialog"]').isExisting()) outcome = "asked";
+                    } catch {
+                        outcome = "quit";
+                    }
+                    return outcome !== "running";
+                },
+                { timeout: WAIT, timeoutMsg: "the app was still running after Close" },
+            );
+            assert.equal(outcome, "quit", "asked to save with nothing unsaved");
         });
     } finally {
         await endSession(browser);
