@@ -76,6 +76,11 @@ divider is the upstream project's changelog, retained for provenance.
   opens a match only once the results are for what is in the box. The file
   explorer had a similar slip: moving between folders quickly could show the
   previous folder's files under the new one's name.
+- **The AI assist bubble stays busy until its own reply arrives.** Closing
+  the bubble while it worked and asking again before the first request had
+  wound down re-enabled its buttons while the second request was still
+  running. Each request now affects the bubble only while it is the current
+  one.
 - **A save that finishes after you switch tabs updates the right tab.** Saves
   run in the background, and one still in flight when you changed tabs was
   applied to the tab you switched to: that tab could show as unsaved when it

@@ -80,14 +80,20 @@ export function AIBubble({ anchor, selectedText, config, onReplace, onInsert, on
         setBusy(action);
         setError(null);
         setResult(null);
+        // A run touches state only while it is still the current one. Close the bubble on a
+        // request and reopen it, and a new run can start before the old one's abort lands;
+        // the old run's `finally` then cleared `busy` under the new one, re-enabling the
+        // buttons mid-request. A result that comes back after its abort is not shown either,
+        // whether or not the transport honoured the signal.
+        const current = () => abortRef.current === ctrl && !ctrl.signal.aborted;
         try {
             const out = await runAIAction(action, selectedText, config, ctrl.signal);
-            setResult(out);
+            if (current()) setResult(out);
         } catch (e) {
-            if ((e as Error).name === "AbortError") return;
+            if ((e as Error).name === "AbortError" || !current()) return;
             setError((e as Error).message);
         } finally {
-            setBusy(null);
+            if (abortRef.current === ctrl) setBusy(null);
         }
     };
 
