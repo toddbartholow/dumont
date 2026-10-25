@@ -26,6 +26,10 @@ export function FileExplorer({
     const [error, setError] = useState<string | null>(null);
     const [currentViewDir, setCurrentViewDir] = useState<string | null>(null);
     const panelRef = useRef<HTMLElement>(null);
+    // Only the newest listing may land. Loads overlap whenever the folder changes (or the
+    // window regains focus) before the last one is back, and a slow listing of the folder
+    // just left used to arrive last and show its files under the new folder's name.
+    const loadIdRef = useRef(0);
 
     // Get directory from current file path
     const getDirectory = (filePath: string | null): string | null => {
@@ -43,8 +47,11 @@ export function FileExplorer({
         } else if (!isOpen) {
             // Reset view when closed so it snaps back to the active file next time
             setCurrentViewDir(null);
+            loadIdRef.current++;
+            setIsLoading(false);
         }
     }, [isOpen, currentFilePath]);
+    useEffect(() => () => { loadIdRef.current++; }, []);
 
     // Load files whenever the currentViewDir changes
     useEffect(() => {
@@ -85,18 +92,21 @@ export function FileExplorer({
     }, [isOpen, onClose]);
 
     const loadFiles = async (directory: string) => {
+        const id = ++loadIdRef.current;
         setIsLoading(true);
         setError(null);
         try {
             const entries = await invoke<FileEntry[]>("list_directory_files", {
                 directory,
             });
+            if (loadIdRef.current !== id) return;
             setFiles(entries);
         } catch (err) {
+            if (loadIdRef.current !== id) return;
             console.error("Failed to load directory:", err);
             setError("Failed to load files");
         } finally {
-            setIsLoading(false);
+            if (loadIdRef.current === id) setIsLoading(false);
         }
     };
 

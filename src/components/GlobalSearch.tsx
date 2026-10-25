@@ -30,6 +30,10 @@ export function GlobalSearch({ isOpen, directory, onClose, onOpenResult }: Globa
     const [query, setQuery] = useState("");
     const [caseSensitive, setCaseSensitive] = useState(false);
     const [results, setResults] = useState<FileResult[]>([]);
+    // Which search `results` answer. They stay on screen while the next query runs, so the
+    // list can say "foo" while the box says "food"; Enter opens a match only when the two
+    // agree, or it would open a line that need not contain what was typed.
+    const [resultsKey, setResultsKey] = useState<string | null>(null);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [active, setActive] = useState(0);
@@ -44,6 +48,7 @@ export function GlobalSearch({ isOpen, directory, onClose, onOpenResult }: Globa
         [results]
     );
     const totalMatches = flat.length;
+    const searchKey = `${directory}\u0000${caseSensitive}\u0000${query.trim()}`;
 
     // Reset transient state each time the panel opens; focus the input.
     useEffect(() => {
@@ -56,28 +61,40 @@ export function GlobalSearch({ isOpen, directory, onClose, onOpenResult }: Globa
 
     // Debounced search. A monotonic request id guards against out-of-order
     // responses (a slow early query resolving after a faster later one).
+    //
+    // EVERY run takes a new id, before anything else, and so does unmounting (below). It used
+    // to be taken only for a non-empty query, so clearing the box or closing the panel left
+    // the search in flight current: its results landed afterwards, filled the emptied list,
+    // and Enter on the empty box opened one of them.
     useEffect(() => {
-        if (!isOpen) return;
+        const id = ++reqIdRef.current;
+        if (!isOpen) {
+            setLoading(false);
+            return;
+        }
         const q = query.trim();
         if (!q || !directory) {
             setResults([]);
+            setResultsKey(null);
             setLoading(false);
             setError(null);
             return;
         }
-        const id = ++reqIdRef.current;
+        const key = `${directory}\u0000${caseSensitive}\u0000${q}`;
         setLoading(true);
         const handle = window.setTimeout(() => {
             invoke<FileResult[]>("search_files", { directory, query: q, caseSensitive })
                 .then((res) => {
                     if (reqIdRef.current !== id) return;
                     setResults(res);
+                    setResultsKey(key);
                     setError(null);
                     setActive(0);
                 })
                 .catch((err) => {
                     if (reqIdRef.current !== id) return;
                     setResults([]);
+                    setResultsKey(null);
                     setError(typeof err === "string" ? err : "Search failed");
                 })
                 .finally(() => {
@@ -86,6 +103,7 @@ export function GlobalSearch({ isOpen, directory, onClose, onOpenResult }: Globa
         }, 200);
         return () => window.clearTimeout(handle);
     }, [isOpen, query, caseSensitive, directory]);
+    useEffect(() => () => { reqIdRef.current++; }, []);
 
     const openItem = (item: FlatItem | undefined) => {
         if (!item) return;
@@ -97,7 +115,7 @@ export function GlobalSearch({ isOpen, directory, onClose, onOpenResult }: Globa
         if (e.key === "Escape") { e.preventDefault(); onClose(); return; }
         if (e.key === "ArrowDown") { e.preventDefault(); setActive((i) => Math.min(i + 1, Math.max(0, totalMatches - 1))); }
         else if (e.key === "ArrowUp") { e.preventDefault(); setActive((i) => Math.max(i - 1, 0)); }
-        else if (e.key === "Enter") { e.preventDefault(); openItem(flat[active]); }
+        else if (e.key === "Enter") { e.preventDefault(); if (resultsKey === searchKey) openItem(flat[active]); }
     };
 
     if (!isOpen) return null;
