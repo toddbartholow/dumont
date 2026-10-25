@@ -1,0 +1,11 @@
+{
+  "name": "dumont-e2e",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "smoke": "node smoke.mjs"
+  },
+  "dependencies": {
+    "webdriverio": "^9.32.0"
+  }
+}

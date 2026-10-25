@@ -16,8 +16,16 @@ permissions:
   contents: write
 
 jobs:
+  # Drive the real app before anything is bumped, pushed or published. A failure
+  # here stops the release with the version files untouched.
+  smoke:
+    uses: ./.github/workflows/smoke.yml
+    permissions:
+      contents: read
+
   # ─── Job 1: Version check + bump ──────────────────────────
   check-and-bump:
+    needs: smoke
     runs-on: ubuntu-latest
     outputs:
       should_release: ${{ steps.bump.outputs.should_release }}
