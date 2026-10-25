@@ -1,5 +1,6 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { isConflictError, saveDocument } from "../utils/saveDocument";
+import { recordAutosaveFailure, type AutosaveFailure } from "../utils/autosaveRetry";
 
 export interface UseAutosaveOptions {
   /** Master toggle (Settings → Editor). */
@@ -40,14 +41,14 @@ export interface UseAutosaveOptions {
 
 /** Debounce before persisting after the last edit. */
 const AUTOSAVE_DELAY_MS = 1500;
-/** Don't surface autosave failures more than once per this window. */
-const ERROR_THROTTLE_MS = 30_000;
 
 /**
  * Autosave: once enabled, persist the buffer a moment after the user stops
  * typing. Silent on success (the status dot already flips to "Saved"); failures
  * surface through `onError`, throttled so a broken disk keeps reminding the user
- * without spamming on every debounce tick. A successful save clears the throttle.
+ * without spamming on every debounce tick. A failed write is retried with a
+ * backoff even if nothing is typed (see autosaveRetry). SAVE-03. A successful
+ * save clears both.
  *
  * `onSaved`/`onError` must be stable (wrap in useCallback) — they're effect deps,
  * so a fresh identity each render would reset the debounce timer continuously and
@@ -66,10 +67,21 @@ export function useAutosave({
   isConflicted = false,
   onConflict,
 }: UseAutosaveOptions): void {
-  const lastErrorRef = useRef(0);
+  const failureRef = useRef<AutosaveFailure | undefined>(undefined);
+  // Bumped after a failed write, so the effect runs again and schedules the retry: nothing
+  // else would re-run it until the text changed.
+  const [retryTick, setRetryTick] = useState(0);
+
+  // Another document's failures say nothing about this one's, and must not mute its toast.
+  useEffect(() => {
+    failureRef.current = undefined;
+  }, [documentId, filePath]);
 
   useEffect(() => {
     if (!enabled || !filePath || content === originalContent || isReviewActive || isConflicted) return;
+    // After a failure, wait out the backoff; typing does not hurry a disk that is refusing.
+    const retryAt = failureRef.current?.retryAt ?? 0;
+    const delay = Math.max(AUTOSAVE_DELAY_MS, retryAt - Date.now());
     const id = window.setTimeout(async () => {
       try {
         // Through saveDocument, so an autosave is snapshotted like any other save.
@@ -77,21 +89,22 @@ export function useAutosave({
         // per 1.5 s of typing, an un-coalesced history would hold the last ninety
         // seconds of the document and nothing else. See src-tauri/src/history.rs.
         const mtime = await saveDocument(filePath, content, { expectedMtime: getKnownMtime?.() });
+        failureRef.current = undefined;
         onSaved(mtime, content, documentId);
-        lastErrorRef.current = 0;
       } catch (err) {
         if (onConflict && isConflictError(err)) {
           onConflict(documentId);
           return;
         }
-        const now = Date.now();
-        if (now - lastErrorRef.current > ERROR_THROTTLE_MS) {
-          lastErrorRef.current = now;
+        const { failure, notify } = recordAutosaveFailure(failureRef.current, Date.now());
+        failureRef.current = failure;
+        if (notify) {
           const msg = typeof err === "string" ? err : (err as { message?: string })?.message;
           onError(msg || "Autosave failed");
         }
+        setRetryTick((n) => n + 1);
       }
-    }, AUTOSAVE_DELAY_MS);
+    }, delay);
     return () => window.clearTimeout(id);
-  }, [enabled, filePath, content, originalContent, isReviewActive, isConflicted, documentId, onSaved, onError, getKnownMtime, onConflict]);
+  }, [enabled, filePath, content, originalContent, isReviewActive, isConflicted, documentId, onSaved, onError, getKnownMtime, onConflict, retryTick]);
 }

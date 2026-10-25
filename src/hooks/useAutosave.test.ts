@@ -16,6 +16,9 @@ const base = (over: Partial<UseAutosaveOptions> = {}): UseAutosaveOptions => ({
   ...over,
 });
 
+/** How many times the document has been written (history snapshots also go through invoke). */
+const saves = () => (invoke as Mock).mock.calls.filter(([cmd]) => cmd === "save_file").length;
+
 describe("useAutosave", () => {
   beforeEach(() => {
     vi.useFakeTimers();
@@ -119,5 +122,42 @@ describe("useAutosave", () => {
     renderHook((p: UseAutosaveOptions) => useAutosave(p), { initialProps: base({ isConflicted: true }) });
     await vi.advanceTimersByTimeAsync(5000);
     expect(invoke).not.toHaveBeenCalled();
+  });
+
+  // SAVE-03: the effect re-runs only when the text changes, so a failed write used to stay
+  // failed until the user typed again.
+  it("retries a failed write without waiting for more typing, and backs off", async () => {
+    (invoke as Mock).mockRejectedValueOnce("Disk full").mockRejectedValueOnce("Disk full");
+    const onSaved = vi.fn();
+    const onError = vi.fn();
+    renderHook((p: UseAutosaveOptions) => useAutosave(p), { initialProps: base({ onSaved, onError }) });
+
+    await vi.advanceTimersByTimeAsync(1600); // first attempt fails
+    expect(saves()).toBe(1);
+    await vi.advanceTimersByTimeAsync(1000); // inside the 2 s backoff
+    expect(saves()).toBe(1);
+    await vi.advanceTimersByTimeAsync(3000); // retry 1 fails
+    expect(saves()).toBe(2);
+    await vi.advanceTimersByTimeAsync(1000); // inside the 4 s backoff
+    expect(saves()).toBe(2);
+    await vi.advanceTimersByTimeAsync(5000); // retry 2 lands
+    expect(saves()).toBe(3);
+    expect(onSaved).toHaveBeenCalledTimes(1);
+    // Three failures' worth of trouble, told once.
+    expect(onError).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not let typing hurry a write past its backoff", async () => {
+    (invoke as Mock).mockRejectedValueOnce("Disk full");
+    const { rerender } = renderHook((p: UseAutosaveOptions) => useAutosave(p), {
+      initialProps: base({ content: "a" }),
+    });
+    await vi.advanceTimersByTimeAsync(1600); // fails; retry due 2 s later
+    rerender(base({ content: "ab" }));
+    await vi.advanceTimersByTimeAsync(1550); // the new debounce has passed, the backoff has not
+    expect(saves()).toBe(1);
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(saves()).toBe(2);
+    expect(invoke).toHaveBeenLastCalledWith("save_file", { path: "C:/doc.md", content: "ab" });
   });
 });

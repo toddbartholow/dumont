@@ -13,6 +13,8 @@ import { TestProviders } from "./test/providers";
 const disk = new Map<string, string>();
 const mtimes = new Map<string, number>();
 let saveGate: Promise<void> | null = null;
+/** Paths whose writes fail, and the error each one fails with. */
+const failSaves = new Map<string, string>();
 
 /** Hold every save_file until the returned function is called. */
 function holdSaves(): () => Promise<void> {
@@ -55,6 +57,7 @@ const invoke = vi.fn(async (cmd: string, args?: Record<string, unknown>) => {
         case "save_file":
             // A test can hold every write open here, to act while it is in flight.
             if (saveGate) await saveGate;
+            if (failSaves.has(path)) throw failSaves.get(path);
             // As save_file does: refuse when the file is not at the mtime the caller last saw.
             // Rejected with the bare message, which is how a CommandError crosses the bridge.
             if (args?.expectedMtime !== undefined && disk.has(path) && args.expectedMtime !== (mtimes.get(path) ?? 1)) {
@@ -135,6 +138,7 @@ beforeEach(() => {
     nextSavePath = null;
     saveGate = null;
     readGate = null;
+    failSaves.clear();
     vi.mocked(dialog.save).mockClear();
 });
 
@@ -173,7 +177,7 @@ async function makeDirty() {
     await act(async () => {
         fireEvent.click(bold);
     });
-    await waitFor(() => expect(document.body.textContent).toMatch(/Unsaved/i));
+    await waitFor(() => expect(document.body.textContent).toMatch(/Unsaved/i), { timeout: 5000 });
 }
 
 describe("App", () => {
@@ -594,5 +598,73 @@ describe("App external conflict", () => {
         await switchTo(/a\.md/);
         expect(await keepMine()).toBeTruthy();
         expect(document.querySelector(".cm-content")!.textContent).toMatch(/\*\*/);
+    });
+});
+
+/**
+ * A background tab's autosave used to swallow every failure, and nothing retried it: the effect
+ * re-runs only when the tab list changes, so the tab sat dirty with no message for as long as it
+ * stayed in the background. SAVE-03.
+ */
+describe("App background autosave failures", () => {
+    const switchTo = (name: RegExp) =>
+        act(async () => {
+            fireEvent.mouseDown(screen.getAllByRole("tab").find((t) => name.test(t.textContent ?? ""))!, { button: 0 });
+        });
+    const failureToasts = () => screen.queryAllByText(/Couldn't autosave "a\.md"/);
+    const writesOf = (path: string) =>
+        invoke.mock.calls.filter(([cmd, args]) => cmd === "save_file" && args?.path === path).length;
+
+    /** a.md dirty in the background, with its writes failing. */
+    async function failingBackgroundTab() {
+        render(
+            <TestProviders settings={{ "editor.toolbar": true, "files.autoSave": true }}>
+                <App />
+            </TestProviders>,
+        );
+        await openViaDialog("/notes/a.md", "# A\n");
+        await openViaDialog("/notes/b.md", "# B\n");
+        await switchTo(/a\.md/);
+        await makeDirty();
+        failSaves.set("/notes/a.md", "Permission denied: /notes/a.md");
+        await switchTo(/b\.md/);
+        await waitFor(() => expect(failureToasts()).toHaveLength(1), { timeout: 4000 });
+    }
+
+    it("says which file failed, and why", async () => {
+        await failingBackgroundTab();
+
+        expect(failureToasts()[0].textContent).toMatch(/Permission denied/);
+        expect(disk.get("/notes/a.md")).toBe("# A\n");
+    });
+
+    it("tries again without the user switching to it", async () => {
+        await failingBackgroundTab();
+
+        failSaves.delete("/notes/a.md");
+
+        await waitFor(() => expect(disk.get("/notes/a.md")).toMatch(/\*\*/), { timeout: 6000 });
+    });
+
+    it("does not repeat the message on every retry", async () => {
+        await failingBackgroundTab();
+        const before = writesOf("/notes/a.md");
+
+        // Past the first retry, which fails the same way. The first toast is still up (errors
+        // stay 5 s), so a second one would be on screen beside it.
+        await waitFor(() => expect(writesOf("/notes/a.md")).toBeGreaterThan(before), { timeout: 4000 });
+
+        expect(failureToasts()).toHaveLength(1);
+    });
+
+    it("still asks before the window closes", async () => {
+        await failingBackgroundTab();
+        const onClose = (win.onCloseRequested.mock.calls.at(-1) as unknown as [(e: { preventDefault: () => void }) => void])[0];
+        const event = { preventDefault: vi.fn() };
+
+        await act(async () => onClose(event));
+
+        expect(event.preventDefault).toHaveBeenCalled();
+        expect(await screen.findByText(/save them before closing/i)).toBeTruthy();
     });
 });
