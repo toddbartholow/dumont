@@ -20,13 +20,17 @@ version = 2
 unmaintained = "workspace"
 # To accept a specific advisory temporarily, add its ID here with a reason.
 ignore = [
-  # DoS-class (memory / CPU exhaustion) advisories in quick-xml 0.39, pulled in
-  # transitively via plist <- Tauri. Can't be fixed from here: plist 1.9 pins
-  # quick-xml "^0.39", so the patched >=0.41 needs a new plist/Tauri release.
-  # Low practical risk (build-time / plist parsing, not untrusted network input).
-  # Remove these once Tauri ships a plist that uses quick-xml >=0.41.
-  "RUSTSEC-2026-0194",
-  "RUSTSEC-2026-0195",
+  # zip 4.x extraction advisories (SUID/SGID bits kept, symlinks escaping the
+  # destination, permissions applied through symlinks), pulled in only by
+  # tauri-plugin-updater, which pins zip "^4" through 2.14 and 3.0 alpha, so the
+  # patched >=9 needs a new updater release. Not reachable in practice: the
+  # updater compiles zip on Windows only, where Unix mode bits and these symlink
+  # paths do not apply, and it extracts only after the archive's minisign
+  # signature checks out against our pubkey.
+  # Remove these once tauri-plugin-updater depends on zip >=9.
+  "RUSTSEC-2026-0367",
+  "RUSTSEC-2026-0368",
+  "RUSTSEC-2026-0369",
 ]
 
 [bans]
