@@ -264,23 +264,25 @@ export function backgroundTabsToAutosave(tabs: TabState[], activeId: string | nu
 }
 
 /**
- * Mark a tab saved, but ONLY if its content has not moved since the save was started.
+ * Record a finished save on the tab it was made from: `originalContent` becomes what is now on
+ * disk, and `knownMtime` the file's new mtime. `as` is a Save As, which also moves the tab.
  *
- * The write is asynchronous, and a user can switch to a background tab and type into it while
- * its own autosave is still in flight. Marking it clean on the strength of what we SET OUT to
- * write would tell the app that whatever they typed in the meantime is already on disk. It is
- * not. Their edit would then sit there looking saved, and be lost on quit.
+ * That marks the tab clean only if its content has not moved since the save started. The write
+ * is asynchronous, and a user can type into the tab while it is in flight; those edits are not
+ * on disk, and the tab must go on saying so or they are lost on quit. It used to get there by
+ * leaving the tab untouched instead, which left `knownMtime` stale (the next focus check then
+ * took the app's own save for an external change) and kept the PREVIOUS baseline, so typing
+ * the text back to that version showed the tab clean while disk held something else.
  */
 export function markTabSaved(
   tabs: TabState[],
   id: string,
   writtenContent: string,
-  mtime: number
+  mtime: number,
+  as?: { filePath: string; fileName: string }
 ): TabState[] {
   return tabs.map((t) =>
-    t.id === id && t.content === writtenContent
-      ? { ...t, originalContent: writtenContent, knownMtime: mtime }
-      : t
+    t.id === id ? { ...t, ...as, originalContent: writtenContent, knownMtime: mtime } : t
   );
 }
 

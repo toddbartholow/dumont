@@ -12,6 +12,17 @@ import { TestProviders } from "./test/providers";
  */
 const disk = new Map<string, string>();
 const mtimes = new Map<string, number>();
+let saveGate: Promise<void> | null = null;
+
+/** Hold every save_file until the returned function is called. */
+function holdSaves(): () => Promise<void> {
+    let open!: () => void;
+    saveGate = new Promise<void>((r) => { open = r; });
+    return async () => {
+        saveGate = null;
+        await act(async () => open());
+    };
+}
 
 const invoke = vi.fn(async (cmd: string, args?: Record<string, unknown>) => {
     const path = args?.path as string;
@@ -29,6 +40,8 @@ const invoke = vi.fn(async (cmd: string, args?: Record<string, unknown>) => {
             };
         }
         case "save_file":
+            // A test can hold every write open here, to act while it is in flight.
+            if (saveGate) await saveGate;
             disk.set(path, args?.content as string);
             mtimes.set(path, (mtimes.get(path) ?? 1) + 1);
             return mtimes.get(path)!;
@@ -97,6 +110,7 @@ beforeEach(() => {
     invoke.mockClear();
     nextOpenPath = null;
     nextSavePath = null;
+    saveGate = null;
     vi.mocked(dialog.save).mockClear();
 });
 
@@ -325,5 +339,61 @@ describe("App native menu", () => {
         await menu("file.save");
 
         await waitFor(() => expect(disk.get("/notes/a.md")).toMatch(/\*\*/));
+    });
+});
+
+/**
+ * A save finishes when the disk says so, and the user can be on another tab by then. Every save
+ * path used to apply its result to whatever tab was in front at that moment. TABS-17.
+ */
+describe("App save completion", () => {
+    const showsUnsaved = () => screen.queryByLabelText("File has unsaved changes") !== null;
+    const tabNamed = (name: RegExp) => screen.getAllByRole("tab").find((t) => name.test(t.textContent ?? ""))!;
+    const switchTo = async (name: RegExp) => {
+        await act(async () => {
+            // Tabs activate on mousedown, as a native tab strip does.
+            fireEvent.mouseDown(tabNamed(name), { button: 0 });
+        });
+    };
+
+    it("a save that finishes after a tab switch marks the tab it saved, not the one in front", async () => {
+        boot();
+        await openViaDialog("/notes/a.md", "# A\n");
+        await openViaDialog("/notes/b.md", "# B\n");
+        await switchTo(/a\.md/);
+        await makeDirty();
+
+        const release = holdSaves();
+        await press({ key: "s", ctrlKey: true });
+        await switchTo(/b\.md/);
+        await release();
+
+        // B was never touched. Handed A's saved text as its baseline, it read as unsaved.
+        await waitFor(() => expect(disk.get("/notes/a.md")).toMatch(/\*\*/));
+        expect(showsUnsaved()).toBe(false);
+        // And A, whose snapshot was taken mid-save, comes back saved rather than dirty.
+        await switchTo(/a\.md/);
+        await waitFor(() => expect(showsUnsaved()).toBe(false));
+    });
+
+    it("a Save As that finishes after a tab switch names the tab it saved", async () => {
+        boot();
+        await openViaDialog("/notes/b.md", "# B\n");
+        await press({ key: "n", ctrlKey: true });
+        await waitFor(() => expect(screen.getAllByRole("tab")).toHaveLength(2));
+        fireEvent.click(await screen.findByRole("button", { name: /bold/i }));
+
+        nextSavePath = "/notes/kept.md";
+        const release = holdSaves();
+        await press({ key: "s", ctrlKey: true, shiftKey: true });
+        await waitFor(() => expect(dialog.save).toHaveBeenCalled());
+        await switchTo(/b\.md/);
+        await release();
+
+        await waitFor(() => expect(disk.get("/notes/kept.md")).toBeDefined());
+        // B keeps its own name and path; it used to be renamed to the Save As target.
+        expect(tabNamed(/b\.md/)).toBeTruthy();
+        expect(tabNamed(/kept\.md/)).toBeTruthy();
+        expect(screen.getAllByRole("tab")).toHaveLength(2);
     });
 });

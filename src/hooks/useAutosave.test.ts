@@ -51,9 +51,9 @@ describe("useAutosave", () => {
     expect(onSaved).not.toHaveBeenCalled();
   });
 
-  it("saves after the debounce and reports the new mtime + saved content", async () => {
+  it("saves after the debounce and reports the new mtime, saved content and tab", async () => {
     const onSaved = vi.fn();
-    renderHook((p: UseAutosaveOptions) => useAutosave(p), { initialProps: base({ onSaved }) });
+    renderHook((p: UseAutosaveOptions) => useAutosave(p), { initialProps: base({ onSaved, documentId: "tab-1" }) });
 
     // Nothing before the debounce elapses.
     await vi.advanceTimersByTimeAsync(1000);
@@ -61,7 +61,8 @@ describe("useAutosave", () => {
 
     await vi.advanceTimersByTimeAsync(600);
     expect(invoke).toHaveBeenCalledWith("save_file", { path: "C:/doc.md", content: "new" });
-    expect(onSaved).toHaveBeenCalledWith(1700000000000, "new");
+    // The tab comes back with the result: by now the user may be looking at another one.
+    expect(onSaved).toHaveBeenCalledWith(1700000000000, "new", "tab-1");
   });
 
   it("coalesces rapid edits — only the latest content is written", async () => {
