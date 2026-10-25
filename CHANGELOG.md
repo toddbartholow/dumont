@@ -13,6 +13,12 @@ divider is the upstream project's changelog, retained for provenance.
 
 ### Fixed
 
+- **Updating no longer discards unsaved work.** "Update now" installed and
+  restarted straight away, and on Windows the installer ends the app with no
+  chance to save, so an untitled note was lost outright. The update now
+  downloads first, then asks to save or discard unsaved changes, the same
+  question closing the window asks. Cancel keeps everything open, and the
+  downloaded update waits behind a "Restart now" button.
 - **Option+Arrow in the editor no longer also switches tabs.** Alt+Left and
   Alt+Right (Option on a Mac) move the caret by word in the editor, and the same
   keypress used to switch to the neighboring tab as well. They now switch tabs

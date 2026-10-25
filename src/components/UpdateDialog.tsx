@@ -7,7 +7,9 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import { getSkippedUpdateVersion, setSkippedUpdateVersion } from "../utils/persistence";
 import { attachFocusTrap } from "../utils/focusTrap";
 
-type Phase = "available" | "downloading" | "installed" | "error";
+// "confirming": downloaded, waiting on the app's unsaved-changes dialog. "ready":
+// downloaded, and the user cancelled that dialog, so the restart waits on them.
+type Phase = "available" | "downloading" | "confirming" | "ready" | "installed" | "error";
 
 /**
  * The GitHub release body is what `update.body` carries. Older releases shipped
@@ -66,16 +68,26 @@ const NOTES_COMPONENTS: Components = {
  * per version; "Later" just dismisses until the next launch. The check is
  * silent on failure — dev builds and offline machines must never see an error
  * popup they can't act on.
+ *
+ * Installing ends the process, so nothing is installed until `confirmRestart`
+ * says the open documents are safe. On Windows the plugin runs the installer
+ * and calls `std::process::exit(0)` inside `install()`: no close event fires
+ * and `relaunch()` is never reached, so without this gate an unsaved buffer,
+ * an untitled one above all, was simply gone. The download comes first and the
+ * question second, so anything typed while it downloads is asked about too.
  */
-export function UpdateDialog() {
+export function UpdateDialog({ confirmRestart }: { confirmRestart?: () => Promise<boolean> }) {
     const [update, setUpdate] = useState<Update | null>(null);
     const [phase, setPhase] = useState<Phase>("available");
     // 0..1 once the content length is known; -1 = indeterminate.
     const [progress, setProgress] = useState(0);
     const [error, setError] = useState("");
     const dialogRef = useRef<HTMLDivElement>(null);
+    // download() keeps the bytes on the Update for install(); fetching them
+    // again after a cancelled restart would only make the user wait twice.
+    const downloadedRef = useRef(false);
 
-    const busy = phase === "downloading" || phase === "installed";
+    const busy = phase === "downloading" || phase === "confirming" || phase === "installed";
 
     // Boilerplate-stripped release notes. Empty when the body is only the
     // generic install blurb (old releases) — the dialog then just shows the
@@ -117,7 +129,9 @@ export function UpdateDialog() {
         return () => { cancelled = true; };
     }, []);
 
-    if (!update) return null;
+    // Hidden while the unsaved-changes dialog is up: this overlay sits above the
+    // shared Modal layer and would cover the question it is waiting on.
+    if (!update || phase === "confirming") return null;
 
     const dismiss = () => setUpdate(null);
 
@@ -127,22 +141,31 @@ export function UpdateDialog() {
     };
 
     const install = async () => {
-        setPhase("downloading");
-        let total = 0;
-        let received = 0;
         try {
-            await update.downloadAndInstall((event) => {
-                if (event.event === "Started") {
-                    total = event.data.contentLength ?? 0;
-                    setProgress(total ? 0 : -1);
-                } else if (event.event === "Progress") {
-                    received += event.data.chunkLength;
-                    if (total) setProgress(Math.min(received / total, 1));
-                } else if (event.event === "Finished") {
-                    setProgress(1);
-                }
-            });
+            if (!downloadedRef.current) {
+                setPhase("downloading");
+                let total = 0;
+                let received = 0;
+                await update.download((event) => {
+                    if (event.event === "Started") {
+                        total = event.data.contentLength ?? 0;
+                        setProgress(total ? 0 : -1);
+                    } else if (event.event === "Progress") {
+                        received += event.data.chunkLength;
+                        if (total) setProgress(Math.min(received / total, 1));
+                    } else if (event.event === "Finished") {
+                        setProgress(1);
+                    }
+                });
+                downloadedRef.current = true;
+            }
+            setPhase("confirming");
+            if (confirmRestart && !(await confirmRestart())) {
+                setPhase("ready");
+                return;
+            }
             setPhase("installed");
+            await update.install();
             await relaunch();
         } catch (e) {
             setError(e instanceof Error ? e.message : String(e));
@@ -201,6 +224,12 @@ export function UpdateDialog() {
                         </div>
                     )}
 
+                    {phase === "ready" && (
+                        <p className="mt-3 text-[12px] text-[var(--text-secondary)]">
+                            Downloaded. It installs when Dumont restarts, so your open documents come first.
+                        </p>
+                    )}
+
                     {phase === "error" && (
                         <p className="mt-3 text-[12px] text-[var(--danger)] break-words">
                             Update failed: {error}
@@ -237,6 +266,25 @@ export function UpdateDialog() {
                                 className="px-3.5 py-1.5 text-sm font-medium rounded-[var(--radius-md)] bg-[var(--accent)] text-[var(--accent-text)] hover:opacity-90 transition-opacity"
                             >
                                 Update now
+                            </button>
+                        </>
+                    )}
+                    {phase === "ready" && (
+                        <>
+                            <button
+                                type="button"
+                                onClick={dismiss}
+                                className="px-3 py-1.5 text-sm rounded-[var(--radius-md)] border border-[var(--border)] text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors"
+                            >
+                                Later
+                            </button>
+                            <button
+                                type="button"
+                                onClick={install}
+                                autoFocus
+                                className="px-3.5 py-1.5 text-sm font-medium rounded-[var(--radius-md)] bg-[var(--accent)] text-[var(--accent-text)] hover:opacity-90 transition-opacity"
+                            >
+                                Restart now
                             </button>
                         </>
                     )}
