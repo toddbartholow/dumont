@@ -82,3 +82,39 @@ describe("TitleBar find button", () => {
         expect(screen.queryByRole("button", { name: /^Find/ })).toBeNull();
     });
 });
+
+// SAVE-04: off macOS there is no File menu, so these are the only visible way to save.
+describe("TitleBar save buttons", () => {
+    it("calls onSaveFile and onSaveAs", () => {
+        const onSaveFile = vi.fn();
+        const onSaveAs = vi.fn();
+        render(<TitleBar {...base} viewMode="preview" onSaveFile={onSaveFile} onSaveAs={onSaveAs} />);
+        fireEvent.click(screen.getByRole("button", { name: "Save" }));
+        fireEvent.click(screen.getByRole("button", { name: "Save As" }));
+        expect(onSaveFile).toHaveBeenCalledTimes(1);
+        expect(onSaveAs).toHaveBeenCalledTimes(1);
+    });
+
+    // The tooltip is where a mouse user learns the shortcut.
+    it("names the shortcut in the tooltip", () => {
+        render(<TitleBar {...base} viewMode="preview" onSaveFile={vi.fn()} onSaveAs={vi.fn()} />);
+        expect(screen.getByRole("button", { name: "Save" }).getAttribute("title")).toMatch(/^Save \((Ctrl\+S|⌘S)\)$/);
+        expect(screen.getByRole("button", { name: "Save As" }).getAttribute("title")).toMatch(/^Save As \((Ctrl\+Shift\+S|⇧⌘S)\)$/);
+    });
+
+    // Real buttons, so Tab reaches them and Enter or Space presses them.
+    it("are buttons in the tab order", () => {
+        render(<TitleBar {...base} viewMode="preview" onSaveFile={vi.fn()} onSaveAs={vi.fn()} />);
+        for (const name of ["Save", "Save As"]) {
+            const b = screen.getByRole("button", { name });
+            expect(b.tagName).toBe("BUTTON");
+            expect(b.getAttribute("tabindex")).not.toBe("-1");
+        }
+    });
+
+    // The welcome screen has nothing to save, the same gate New and Open already follow.
+    it("renders no save buttons before a file is open", () => {
+        render(<TitleBar {...base} fileName={undefined} viewMode="preview" onSaveFile={vi.fn()} onSaveAs={vi.fn()} />);
+        expect(screen.queryByRole("button", { name: /^Save/ })).toBeNull();
+    });
+});

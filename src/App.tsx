@@ -2003,6 +2003,8 @@ function AppContent() {
         filePath={filePath ?? undefined}
         onOpenFile={handleOpenFile}
         onNewFile={handleNewFile}
+        onSaveFile={handleSaveFile}
+        onSaveAs={handleSaveAs}
         onFind={handleFind}
         viewMode={mode}
         findActive={mode === "preview" ? previewFindOpen : editorFindOpen}

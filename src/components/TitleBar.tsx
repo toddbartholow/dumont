@@ -12,6 +12,13 @@ export interface TitleBarProps {
     filePath?: string;
     onOpenFile?: () => void;
     onNewFile?: () => void;
+    /**
+     * Save and Save As. The window is undecorated, so off macOS there is no File
+     * menu, and before these buttons a Windows or Linux user had to know Ctrl+S,
+     * find it in the command palette, or meet the prompt on close. SAVE-04.
+     */
+    onSaveFile?: () => void;
+    onSaveAs?: () => void;
     /** Toggles whichever find bar fits the current view. App decides which. */
     onFind?: () => void;
     /**
@@ -39,7 +46,7 @@ export interface TitleBarProps {
     onToggleFullscreen?: () => void;
 }
 
-function TitleBarImpl({ fileName, isDirty, filePath, onOpenFile, onNewFile, onFind, viewMode, findActive = false, getExportHtml, onExportSuccess, onExportError, onToggleAI, aiActive, isFullscreen, onToggleFullscreen }: TitleBarProps) {
+function TitleBarImpl({ fileName, isDirty, filePath, onOpenFile, onNewFile, onSaveFile, onSaveAs, onFind, viewMode, findActive = false, getExportHtml, onExportSuccess, onExportError, onToggleAI, aiActive, isFullscreen, onToggleFullscreen }: TitleBarProps) {
     // Names the bar the click opens, and nothing more. NOT "Find and replace"
     // for the editor, though that bar can replace: this button opens it in find
     // mode and the hint below says ⌘F, while replace is ⌥⌘F / Ctrl+H. Labelling
@@ -178,6 +185,28 @@ function TitleBarImpl({ fileName, isDirty, filePath, onOpenFile, onNewFile, onFi
                                 <span className="material-symbols-outlined text-[16px]">folder_open</span>
                                 <span className="hidden sm:inline">Open</span>
                             </button>
+                            {onSaveFile && (
+                                <button
+                                    onClick={onSaveFile}
+                                    aria-label="Save"
+                                    className="flex items-center gap-1 px-2 py-1 rounded-[var(--radius-md)] hover:bg-[var(--bg-hover)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors text-xs"
+                                    title={`Save (${shortcutLabel("Mod+S")})`}
+                                >
+                                    <span className="material-symbols-outlined text-[16px]" aria-hidden="true">save</span>
+                                    <span className="hidden sm:inline">Save</span>
+                                </button>
+                            )}
+                            {onSaveAs && (
+                                <button
+                                    onClick={onSaveAs}
+                                    aria-label="Save As"
+                                    className="flex items-center gap-1 px-2 py-1 rounded-[var(--radius-md)] hover:bg-[var(--bg-hover)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors text-xs"
+                                    title={`Save As (${shortcutLabel("Mod+Shift+S")})`}
+                                >
+                                    <span className="material-symbols-outlined text-[16px]" aria-hidden="true">save_as</span>
+                                    <span className="hidden lg:inline">Save As</span>
+                                </button>
+                            )}
                             {onFind && (
                                 <button
                                     onClick={onFind}
