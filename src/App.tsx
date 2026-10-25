@@ -1045,12 +1045,23 @@ function AppContent() {
     if (dirtyBg.length === 0) return;
     // The debounce, or the soonest any failed tab's backoff ends, whichever is later.
     const due = Math.min(...dirtyBg.map((t) => failures.get(t.id)?.retryAt ?? 0));
+    const delay = Math.max(1500, due - Date.now());
+    // Which tabs are due is judged against the time this timer is FOR, not the clock when it
+    // fires. A timer can fire a few ms early by Date.now() (Node and the browser measure it
+    // from a cached loop time), and judged by the clock, the very tab it was set for read as
+    // not yet due: skipped, with nothing written and nothing failed, so no retry was ever
+    // scheduled and the tab sat unsaved until something else changed the tab list.
+    const firesAt = Date.now() + delay;
     const timer = window.setTimeout(async () => {
       let wrote = false;
       let failed = false;
+      let waiting = false;
       for (const t of dirtyBg) {
         const prev = failures.get(t.id);
-        if (prev && prev.retryAt > Date.now()) continue;
+        if (prev && prev.retryAt > firesAt) {
+          waiting = true;
+          continue;
+        }
         try {
           const mtime = await saveDocument(t.filePath!, t.content, { expectedMtime: t.knownMtime });
           failures.delete(t.id);
@@ -1076,8 +1087,10 @@ function AppContent() {
       // here, so the backlinks panel has to re-scan. Nothing else would tell it:
       // the folder did change, but the window never lost focus.
       if (wrote) bumpSaved();
-      if (failed) setBgRetryTick((n) => n + 1);
-    }, Math.max(1500, due - Date.now()));
+      // Run again for a failure's retry, and for any tab still backing off: nothing else is
+      // guaranteed to.
+      if (failed || waiting) setBgRetryTick((n) => n + 1);
+    }, delay);
     return () => window.clearTimeout(timer);
   }, [tabs, conflictedTabs, autoSaveEnabled, commitTabs, bumpSaved, markConflicted, showToast, bgRetryTick]);
 
