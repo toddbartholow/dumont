@@ -267,6 +267,12 @@ select:focus-visible,
   background: var(--scrollbar-hover);
 }
 
+/* Where a vertical and a horizontal scrollbar meet (the editor with word wrap
+   off). Unstyled, WebView2 paints it white, which shows on a dark theme. */
+::-webkit-scrollbar-corner {
+  background: var(--scrollbar-track);
+}
+
 /* ===== Selection ===== */
 ::selection {
   background: var(--selection-bg);

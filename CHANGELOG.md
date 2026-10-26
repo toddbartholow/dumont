@@ -11,6 +11,12 @@ divider is the upstream project's changelog, retained for provenance.
 
 ## [Unreleased]
 
+### Fixed
+
+- **No white square in the editor's corner with word wrap off.** Where the
+  vertical and horizontal scrollbars meet, Windows drew a white square that
+  stood out on a dark theme. It now takes the scrollbar track's colour.
+
 ## [1.1.4] - 2026-10-26
 
 ### Added
