@@ -11,6 +11,8 @@ divider is the upstream project's changelog, retained for provenance.
 
 ## [Unreleased]
 
+## [1.1.6] - 2026-10-26
+
 ### Fixed
 
 - **Saving while closing no longer overwrites a file changed elsewhere.** Ctrl+S
