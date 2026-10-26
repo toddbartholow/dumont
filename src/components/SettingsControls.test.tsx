@@ -338,6 +338,20 @@ describe("FontSizeField", () => {
         expect(input).toHaveValue("16");
     });
 
+    it("leaves Home and End to the caret while the preset list is open", () => {
+        // They used to move the highlight to the first or last preset and cancel
+        // the key, so the caret could not get to either end of the draft.
+        const { input } = setup(16);
+        fireEvent.keyDown(input, { key: "ArrowDown", altKey: true });
+        const active = input.getAttribute("aria-activedescendant");
+        expect(active).toBeTruthy();
+
+        expect(fireEvent.keyDown(input, { key: "Home" })).toBe(true); // not prevented
+        expect(fireEvent.keyDown(input, { key: "End" })).toBe(true);
+        expect(input).toHaveAttribute("aria-activedescendant", active!);
+        expect(screen.getByRole("listbox")).toBeInTheDocument();
+    });
+
     it("closes the preset list on Tab instead of stranding it open", () => {
         const { input } = setup();
         fireEvent.keyDown(input, { key: "ArrowDown", altKey: true });
