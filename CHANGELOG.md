@@ -11,6 +11,13 @@ divider is the upstream project's changelog, retained for provenance.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Home and End move the cursor in the font-size field, even with its list
+  open.** With the preset list open they jumped the highlight to the first or
+  last size instead, so the cursor could not reach either end of what you were
+  typing.
+
 ## [1.1.5] - 2026-10-26
 
 ### Fixed

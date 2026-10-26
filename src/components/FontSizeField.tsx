@@ -147,16 +147,10 @@ export function FontSizeField({ value, onChange, label = "Size", labelledBy, des
                     e.stopPropagation();
                     setActiveIndex((i) => Math.max(0, i - 1));
                     return;
-                case "Home":
-                    e.preventDefault();
-                    e.stopPropagation();
-                    setActiveIndex(0);
-                    return;
-                case "End":
-                    e.preventDefault();
-                    e.stopPropagation();
-                    setActiveIndex(FONT_SIZE_PRESETS.length - 1);
-                    return;
+                // No Home or End: in an editable combobox they belong to the text
+                // cursor (APG), open list or not. They used to jump the highlight
+                // to the first or last preset, so with the list open the caret
+                // could not reach either end of what you were typing.
                 case "Tab":
                     // Commit and close, but let focus move on — a Tab that left
                     // the listbox open stranded it floating over the UI, closable
