@@ -26,16 +26,20 @@ export interface SaveCloseIO {
     save: (path: string, content: string) => Promise<unknown>;
     /** Tell the user why it did not work. */
     onError: (message: string) => void;
+    /** Whether a failed write was refused because the file changed on disk. That is not an
+     *  error to report: the user has a choice to make, and the caller shows it. */
+    isConflict?: (err: unknown) => boolean;
 }
 
 export type SaveCloseOutcome =
     /** It is on disk. Closing the tab now loses nothing. */
     | { action: "close"; path: string }
     /**
-     * It is NOT on disk: the user cancelled the picker, or the write failed. The tab must stay
-     * open, and so must the dialog, or the buffer goes in the bin unremarked.
+     * It is NOT on disk: the user cancelled the picker, the write failed, or the file changed
+     * on disk and the write was refused rather than overwrite it. The tab must stay open, or
+     * the buffer goes in the bin unremarked.
      */
-    | { action: "keep-open"; reason: "cancelled" | "save-failed" };
+    | { action: "keep-open"; reason: "cancelled" | "save-failed" | "conflict" };
 
 export async function saveThenClose(
     target: SaveCloseTarget,
@@ -54,6 +58,7 @@ export async function saveThenClose(
     try {
         await io.save(path, target.content);
     } catch (err) {
+        if (io.isConflict?.(err)) return { action: "keep-open", reason: "conflict" };
         // A full disk, a read-only volume, a file someone else has locked. The content is
         // still only in memory, and memory is what we are about to throw away.
         io.onError(err instanceof Error ? err.message : String(err));

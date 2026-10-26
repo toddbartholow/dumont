@@ -13,6 +13,12 @@ divider is the upstream project's changelog, retained for provenance.
 
 ### Fixed
 
+- **Saving while closing no longer overwrites a file changed elsewhere.** Ctrl+S
+  and autosave already refused to write over a change another program had made
+  to the file, but "Save" in the unsaved-changes dialog, when closing the window
+  or a tab, wrote straight over it. Now the close stops at that file, shows it
+  with the "changed on disk" bar so you can choose which version to keep, and
+  you close again once you have. Other files in the same close are still saved.
 - **Home and End move the cursor in the font-size field, even with its list
   open.** With the preset list open they jumped the highlight to the first or
   last size instead, so the cursor could not reach either end of what you were
