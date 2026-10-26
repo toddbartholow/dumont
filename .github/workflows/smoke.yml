@@ -140,15 +140,46 @@ jobs:
           $app = (Resolve-Path src-tauri\target\release\dumont.exe).Path
           $p = Start-Process -FilePath $app -PassThru
 
+          # Not Process.MainWindowHandle: that settles on the single-instance
+          # plugin's message window ("com.irqstudio.dumont-siw"), never the app's.
+          # List the process's VISIBLE top-level windows instead.
+          Add-Type -TypeDefinition @'
+          using System;
+          using System.Collections.Generic;
+          using System.Runtime.InteropServices;
+          using System.Text;
+          public static class Wins {
+            delegate bool EnumProc(IntPtr h, IntPtr l);
+            [DllImport("user32.dll")] static extern bool EnumWindows(EnumProc f, IntPtr l);
+            [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
+            [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr h);
+            [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetWindowText(IntPtr h, StringBuilder s, int n);
+            [DllImport("user32.dll")] public static extern bool PostMessage(IntPtr h, uint msg, IntPtr w, IntPtr l);
+            public static List<KeyValuePair<IntPtr, string>> Visible(uint pid) {
+              var found = new List<KeyValuePair<IntPtr, string>>();
+              EnumWindows((h, l) => {
+                uint owner; GetWindowThreadProcessId(h, out owner);
+                if (owner == pid && IsWindowVisible(h)) {
+                  var s = new StringBuilder(256); GetWindowText(h, s, 256);
+                  found.Add(new KeyValuePair<IntPtr, string>(h, s.ToString()));
+                }
+                return true;
+              }, IntPtr.Zero);
+              return found;
+            }
+          }
+          '@
+
           # The window starts hidden; wait for the app to show it.
           $deadline = (Get-Date).AddSeconds(60)
           do {
             Start-Sleep -Seconds 1
-            $p.Refresh()
-          } until ($p.HasExited -or $p.MainWindowHandle -ne 0 -or (Get-Date) -gt $deadline)
+            $shown = [Wins]::Visible([uint32]$p.Id) | Where-Object { $_.Value -and $_.Value -notmatch '-siw$' }
+          } until ($p.HasExited -or $shown -or (Get-Date) -gt $deadline)
           if ($p.HasExited) { throw "dumont exited during startup, code $($p.ExitCode)" }
-          if ($p.MainWindowHandle -eq 0) { throw "dumont is running but never showed its window" }
-          "Window shown: '$($p.MainWindowTitle)'"
+          if (-not $shown) { throw "dumont is running but never showed its window" }
+          $window = @($shown)[0]
+          "Window shown: '$($window.Value)'"
 
           $webview = Get-CimInstance Win32_Process -Filter "Name='msedgewebview2.exe'" |
             Where-Object { $_.CommandLine -match 'webview-exe-name=dumont\.exe' }
@@ -160,7 +191,7 @@ jobs:
 
           # WM_CLOSE goes through the same close-requested path as the title bar
           # X. With nothing unsaved the app should quit, not ask.
-          [void]$p.CloseMainWindow()
+          [void][Wins]::PostMessage($window.Key, 0x0010, [IntPtr]::Zero, [IntPtr]::Zero)  # WM_CLOSE
           if (-not $p.WaitForExit(15000)) {
             Stop-Process -Id $p.Id -Force
             throw "dumont did not quit on close"
