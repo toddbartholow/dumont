@@ -11,6 +11,8 @@ divider is the upstream project's changelog, retained for provenance.
 
 ## [Unreleased]
 
+## [1.1.4] - 2026-10-26
+
 ### Added
 
 - **Save and Save As buttons in the title bar.** On Windows and Linux there is
