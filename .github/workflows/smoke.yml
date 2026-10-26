@@ -9,8 +9,14 @@ name: Smoke test
 # several minutes. Run it by hand (Actions tab -> Smoke test -> Run workflow);
 # Release calls it before anything is bumped or published.
 #
-# Linux only. tauri-driver supports Linux and Windows, not macOS, and 22.04 is
-# the image Release bundles on.
+# The driven test is Linux only, on 22.04, the image Release bundles on.
+# tauri-driver cannot drive Dumont on Windows: msedgedriver attaches through
+# WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS, and WebView2 ignores that variable when
+# the app passes its own browser arguments, which wry always does. It also hands
+# `args` to the browser rather than the app, and gives each session a fresh data
+# folder, so the argv and restore checks could not run there anyway. Windows
+# gets the launch-windows job instead: start the binary, see the window come up,
+# close it.
 on:
   workflow_dispatch:
   workflow_call:
@@ -93,3 +99,70 @@ jobs:
           name: smoke-failure
           path: ${{ runner.temp }}/smoke/failures
           if-no-files-found: ignore
+
+  # Windows cannot run the driven test (see the top of this file), so check the
+  # release binary starts: its WebView2 comes up, the window becomes visible, and
+  # it closes cleanly. The window is created hidden and only shown once React
+  # has mounted, so a visible window also catches a build that can never show
+  # itself, which has shipped before (show/set-focus missing from capabilities).
+  launch-windows:
+    runs-on: windows-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
+        continue-on-error: true
+        with:
+          workspaces: './src-tauri -> target'
+          key: smoke
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: latest
+
+      - name: Install frontend dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Build the app
+        run: bun tauri build --no-bundle
+
+      - name: Launch, show the window, close
+        shell: pwsh
+        run: |
+          $app = (Resolve-Path src-tauri\target\release\dumont.exe).Path
+          $p = Start-Process -FilePath $app -PassThru
+
+          # The window starts hidden; wait for the app to show it.
+          $deadline = (Get-Date).AddSeconds(60)
+          do {
+            Start-Sleep -Seconds 1
+            $p.Refresh()
+          } until ($p.HasExited -or $p.MainWindowHandle -ne 0 -or (Get-Date) -gt $deadline)
+          if ($p.HasExited) { throw "dumont exited during startup, code $($p.ExitCode)" }
+          if ($p.MainWindowHandle -eq 0) { throw "dumont is running but never showed its window" }
+          "Window shown: '$($p.MainWindowTitle)'"
+
+          $webview = Get-CimInstance Win32_Process -Filter "Name='msedgewebview2.exe'" |
+            Where-Object { $_.CommandLine -match 'webview-exe-name=dumont\.exe' }
+          if (-not $webview) { throw "no WebView2 process belongs to dumont" }
+
+          # Still up a little later: a crash just after the first paint shows here.
+          Start-Sleep -Seconds 10
+          if ($p.HasExited) { throw "dumont exited after showing its window, code $($p.ExitCode)" }
+
+          # WM_CLOSE goes through the same close-requested path as the title bar
+          # X. With nothing unsaved the app should quit, not ask.
+          [void]$p.CloseMainWindow()
+          if (-not $p.WaitForExit(15000)) {
+            Stop-Process -Id $p.Id -Force
+            throw "dumont did not quit on close"
+          }
+          "Closed cleanly, exit code $($p.ExitCode)"
