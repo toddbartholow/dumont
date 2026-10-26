@@ -7,7 +7,8 @@ import { Window } from "@tauri-apps/api/window";
 
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 
-import { ThemeProvider, useTheme } from "./context/ThemeContext";
+import { ThemeProvider } from "./context/ThemeContext";
+import { useTheme } from "./context/useTheme";
 import { TitleBar } from "./components/TitleBar";
 import { WelcomeScreen } from "./components/WelcomeScreen";
 import { CodeEditor, type FindActionRunner } from "./components/CodeEditor";
@@ -21,7 +22,7 @@ import { useToast } from "./hooks/useToast";
 import { useGlobalShortcuts } from "./hooks/useGlobalShortcuts";
 import { useDebouncedValue } from "./hooks/useDebouncedValue";
 import { usePersistedState } from "./hooks/usePersistedState";
-import { useSetting, useSettings } from "./settings/SettingsProvider";
+import { useSetting, useSettings } from "./settings/useSettings";
 import { useFullscreen } from "./hooks/useFullscreen";
 import { useScrollSync } from "./hooks/useScrollSync";
 import { useAutosave } from "./hooks/useAutosave";

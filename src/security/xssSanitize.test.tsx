@@ -23,7 +23,7 @@ import Markdown from "react-markdown";
 import rehypeRaw from "rehype-raw";
 import rehypeSanitize from "rehype-sanitize";
 import remarkGfm from "remark-gfm";
-import { SANITIZE_SCHEMA } from "../components/MarkdownPreview";
+import { SANITIZE_SCHEMA } from "../utils/sanitizeSchema";
 
 afterEach(cleanup);
 

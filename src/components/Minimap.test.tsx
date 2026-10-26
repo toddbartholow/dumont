@@ -5,7 +5,8 @@
 import { describe, it, expect, beforeAll, afterEach } from "vitest";
 import { render, waitFor, cleanup } from "@testing-library/react";
 import { CodeEditor } from "./CodeEditor";
-import { MINIMAP_WIDTH, wordRuns, rowsForLine, rowHeight, sliderRect, mapOffset } from "./Minimap";
+import { MINIMAP_WIDTH } from "./Minimap";
+import { wordRuns, rowsForLine, rowHeight, sliderRect, mapOffset } from "../utils/minimapGeometry";
 import { TestProviders } from "../test/providers";
 import { installCodeMirrorDomPolyfills } from "../test/codemirrorDom";
 

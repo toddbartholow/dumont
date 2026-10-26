@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
-import { useTheme } from '../context/ThemeContext';
+import { useTheme } from '../context/useTheme';
 import { useDropdownKeyboard } from '../hooks/useDropdownKeyboard';
 
 // The export module isn't needed for first paint, so we import it on demand to

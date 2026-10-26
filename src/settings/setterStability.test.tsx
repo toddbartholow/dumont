@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { renderHook } from "@testing-library/react";
-import { useSetting } from "./SettingsProvider";
-import { useTheme } from "../context/ThemeContext";
+import { useSetting } from "./useSettings";
+import { useTheme } from "../context/useTheme";
 import { TestProviders } from "../test/providers";
 
 /**
