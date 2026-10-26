@@ -754,3 +754,125 @@ describe("App title bar saving", () => {
         expect(screen.queryByLabelText("File has unsaved changes")).not.toBeNull();
     });
 });
+
+/**
+ * Saving on the way out (the close-window and close-tab dialogs) used to write without the
+ * disk check every other save makes, so "Save" there replaced a change another program had
+ * made to the file, silently, as the last thing the app did. EXT-03.
+ */
+describe("App saving on the way out", () => {
+    const THEIRS = "# Changed by another program\n";
+    const changeOnDisk = (path: string, text: string) => {
+        disk.set(path, text);
+        mtimes.set(path, (mtimes.get(path) ?? 1) + 10);
+    };
+    const requestWindowClose = async () => {
+        const onClose = (win.onCloseRequested.mock.calls.at(-1) as unknown as [(e: { preventDefault: () => void }) => void])[0];
+        await act(async () => onClose({ preventDefault: vi.fn() }));
+    };
+    // The dialog is lazy-loaded, so wait for it rather than expecting it on the next tick.
+    const answer = async (name: RegExp) => {
+        const button = within(await screen.findByRole("alertdialog")).getByRole("button", { name });
+        await act(async () => {
+            fireEvent.click(button);
+        });
+    };
+    const conflictBar = () => screen.findByRole("button", { name: "Keep my version" }, { timeout: 4000 });
+
+    beforeEach(() => win.destroy.mockClear());
+
+    it("closing the window does not overwrite a file that changed on disk", async () => {
+        boot();
+        await openViaDialog("/notes/a.md", "# A\n");
+        await makeDirty();
+        changeOnDisk("/notes/a.md", THEIRS);
+
+        await requestWindowClose();
+        await answer(/^Save$/);
+
+        expect(await conflictBar()).toBeTruthy();
+        expect(disk.get("/notes/a.md")).toBe(THEIRS);
+        expect(win.destroy).not.toHaveBeenCalled();
+        expect(screen.getByText(/changed on disk\. Choose which version to keep/i)).toBeTruthy();
+        // The edits are still there to keep.
+        expect(document.querySelector(".cm-content")!.textContent).toMatch(/\*\*/);
+        // And the keyboard is on the choice it has to make.
+        await waitFor(() => expect(document.activeElement).toBe(screen.getByRole("button", { name: "Reload from disk" })));
+    });
+
+    it("saves the other tabs, stops at the one that changed, and remembers what it saved", async () => {
+        boot();
+        await openViaDialog("/notes/a.md", "# A\n");
+        await makeDirty();
+        await openViaDialog("/notes/b.md", "# B\n");
+        // Already in the editor (the view mode carries over), so not makeDirty: its Ctrl+E
+        // would switch back to reading.
+        const bold = await screen.findByRole("button", { name: /bold/i });
+        await act(async () => {
+            fireEvent.click(bold);
+        });
+        await waitFor(() => expect(document.querySelector(".cm-content")!.textContent).toMatch(/\*\*/));
+        changeOnDisk("/notes/b.md", THEIRS);
+
+        await requestWindowClose();
+        await answer(/^Save all$/);
+
+        expect(await conflictBar()).toBeTruthy();
+        expect(disk.get("/notes/a.md")).toMatch(/\*\*/);
+        expect(disk.get("/notes/b.md")).toBe(THEIRS);
+        expect(win.destroy).not.toHaveBeenCalled();
+
+        // a.md reached the disk, so a second close asks about b.md alone.
+        await requestWindowClose();
+        expect(await screen.findByText(/Your changes will be lost/i)).toBeTruthy();
+        expect(screen.queryByText(/2 files have unsaved changes/i)).toBeNull();
+    });
+
+    it("a tab already showing the conflict is not saved by the close dialog either", async () => {
+        boot();
+        await openViaDialog("/notes/a.md", "# A\n");
+        changeOnDisk("/notes/a.md", THEIRS);
+        await makeDirty();
+        await act(async () => {
+            window.dispatchEvent(new Event("focus"));
+        });
+        await conflictBar();
+        invoke.mockClear();
+
+        await requestWindowClose();
+        await answer(/^Save$/);
+
+        expect(await conflictBar()).toBeTruthy();
+        expect(invoke.mock.calls.some(([cmd]) => cmd === "save_file")).toBe(false);
+        expect(disk.get("/notes/a.md")).toBe(THEIRS);
+        expect(win.destroy).not.toHaveBeenCalled();
+    });
+
+    it("closing a tab does not overwrite a file that changed on disk", async () => {
+        boot();
+        await openViaDialog("/notes/a.md", "# A\n");
+        await makeDirty();
+        changeOnDisk("/notes/a.md", THEIRS);
+
+        await press({ key: "w", ctrlKey: true });
+        await answer(/^Save$/);
+
+        expect(await conflictBar()).toBeTruthy();
+        expect(disk.get("/notes/a.md")).toBe(THEIRS);
+        // The tab is still open, edits and all.
+        expect(screen.getAllByRole("tab").some((t) => /a\.md/.test(t.textContent ?? ""))).toBe(true);
+        expect(document.querySelector(".cm-content")!.textContent).toMatch(/\*\*/);
+    });
+
+    it("Save in the close dialogs still writes when nothing changed on disk", async () => {
+        boot();
+        await openViaDialog("/notes/a.md", "# A\n");
+        await makeDirty();
+
+        await requestWindowClose();
+        await answer(/^Save$/);
+
+        await waitFor(() => expect(win.destroy).toHaveBeenCalled());
+        expect(disk.get("/notes/a.md")).toMatch(/\*\*/);
+    });
+});

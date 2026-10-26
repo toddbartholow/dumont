@@ -908,11 +908,69 @@ function AppContent() {
     settleRestartGate(false);
   }, [closeModal, settleRestartGate]);
 
+  // A finished save belongs to the tab it was STARTED from, which need not be the one in
+  // front by the time the write comes back. Applied to the live state regardless, A's saved
+  // text became B's baseline (B then read clean or dirty against the wrong document), and a
+  // Save As handed A's new path to B. So the result goes to the tab that asked: the live
+  // state if it is still active, its snapshot if not, and nowhere if it has been closed.
+  const recordSave = useCallback(
+    (tabId: string | null, written: string, mtime: number, as?: { filePath: string; fileName: string }) => {
+      if (tabId !== null && tabId !== activeTabIdRef.current) {
+        commitTabs(markTabSaved(tabsRef.current, tabId, written, mtime, as));
+        return;
+      }
+      knownMtimeRef.current = mtime;
+      setOriginalContent(written);
+      if (as) {
+        setFilePath(as.filePath);
+        setFileName(as.fileName);
+        // Keep the active tab's entry in step with the new path/name so reopening
+        // the just-saved file switches to this tab instead of duplicating it. TABS-01.
+        if (tabId !== null) {
+          commitTabs(tabsRef.current.map((t) => (t.id === tabId ? {
+            ...t, ...as, content: written, originalContent: written, knownMtime: mtime,
+          } : t)));
+        }
+      }
+    },
+    [commitTabs]
+  );
+
+  // The mtime a tab's file had when this app last read or wrote it. The active tab's is live
+  // in knownMtimeRef; its snapshot in the array lags until the next switch.
+  const knownMtimeOf = useCallback((id: string) => (
+    id === activeTabIdRef.current
+      ? knownMtimeRef.current
+      : tabsRef.current.find((t) => t.id === id)?.knownMtime ?? 0
+  ), []);
+
+  // A save on the way out (closing the window or a tab) found the file changed on disk. Keep
+  // the tab, bring it to the front with its ConflictBar, and let the user choose. The dialogs
+  // used to write straight over the other edit: the one save path EXT-03 had not reached.
+  const holdForConflict = useCallback((id: string, fileName: string) => {
+    markConflicted(id);
+    activateTab(id);
+    showToast(`"${fileName}" changed on disk. Choose which version to keep, then close again.`, "error");
+    // After the bar has mounted: it only takes focus on a CHANGE of the signal.
+    window.setTimeout(() => setConflictFocus((n) => n + 1), 0);
+  }, [markConflicted, activateTab, showToast]);
+
   // Save EVERY dirty tab, then close. An untitled tab prompts for a location;
   // cancelling that (or any failed save) aborts the close so nothing is lost. TABS-04.
+  // A file that changed on disk is not overwritten either: the close stops at that tab
+  // (holdForConflict). EXT-03.
   const handleSaveAndCloseWindow = useCallback(async () => {
     hideModal("unsavedBeforeClose");
-    for (const t of collectDirtyTabs()) {
+    const dirty = collectDirtyTabs();
+    // Already in conflict: the user has yet to say which version wins, and "Save" in a
+    // closing dialog is not that answer.
+    const parked = dirty.find((t) => conflictedTabsRef.current.has(t.id));
+    if (parked) {
+      settleRestartGate(false);
+      holdForConflict(parked.id, parked.fileName);
+      return;
+    }
+    for (const t of dirty) {
       let path = t.filePath;
       if (!path) {
         const selected = await save({
@@ -931,16 +989,29 @@ function AppContent() {
         // process dies is simply lost. That would make the version saved on the way
         // out, the last one the user ever wrote, the one version reliably absent from
         // its own history. Nothing is racing us for latency here; the app is quitting.
-        await saveDocument(path, t.content, { awaitSnapshot: true });
+        const mtime = await saveDocument(path, t.content, {
+          awaitSnapshot: true,
+          expectedMtime: t.filePath ? knownMtimeOf(t.id) : undefined,
+        });
+        // Record it, in case a later tab stops the close: this one must not stay dirty, or
+        // keep the old mtime and conflict with its own write the next time it is saved.
+        recordSave(t.id, t.content, mtime, t.filePath ? undefined : {
+          filePath: path,
+          fileName: path.replace(/\\/g, "/").split("/").pop() || t.fileName,
+        });
       } catch (err) {
+        settleRestartGate(false);
+        if (isConflictError(err)) {
+          holdForConflict(t.id, t.fileName);
+          return;
+        }
         const msg = errMessage(err);
         showToast(msg || `Failed to save ${t.fileName}`, "error");
-        settleRestartGate(false);
         return; // don't close on a failed save — the user would lose the buffer
       }
     }
     proceedPastUnsaved();
-  }, [collectDirtyTabs, proceedPastUnsaved, settleRestartGate, showToast, hideModal]);
+  }, [collectDirtyTabs, proceedPastUnsaved, settleRestartGate, showToast, hideModal, knownMtimeOf, recordSave, holdForConflict]);
 
   const handleDiscardAndCloseWindow = useCallback(() => {
     hideModal("unsavedBeforeClose");
@@ -972,34 +1043,6 @@ function AppContent() {
   // Autosave 1.5s after the last edit. See useAutosave for the throttling and
   // the AI-review guard (AI-01). Callbacks are memoised so the debounce timer
   // isn't reset on every unrelated re-render.
-  //
-  // A finished save belongs to the tab it was STARTED from, which need not be the one in
-  // front by the time the write comes back. Applied to the live state regardless, A's saved
-  // text became B's baseline (B then read clean or dirty against the wrong document), and a
-  // Save As handed A's new path to B. So the result goes to the tab that asked: the live
-  // state if it is still active, its snapshot if not, and nowhere if it has been closed.
-  const recordSave = useCallback(
-    (tabId: string | null, written: string, mtime: number, as?: { filePath: string; fileName: string }) => {
-      if (tabId !== null && tabId !== activeTabIdRef.current) {
-        commitTabs(markTabSaved(tabsRef.current, tabId, written, mtime, as));
-        return;
-      }
-      knownMtimeRef.current = mtime;
-      setOriginalContent(written);
-      if (as) {
-        setFilePath(as.filePath);
-        setFileName(as.fileName);
-        // Keep the active tab's entry in step with the new path/name so reopening
-        // the just-saved file switches to this tab instead of duplicating it. TABS-01.
-        if (tabId !== null) {
-          commitTabs(tabsRef.current.map((t) => (t.id === tabId ? {
-            ...t, ...as, content: written, originalContent: written, knownMtime: mtime,
-          } : t)));
-        }
-      }
-    },
-    [commitTabs]
-  );
   const handleAutosaved = useCallback(
     (mtime: number, saved: string, tabId: string | null) => recordSave(tabId, saved, mtime),
     [recordSave]
@@ -1252,21 +1295,36 @@ function AppContent() {
 
   // "Save" in the close-tab dialog: persist the tab (prompting a location for an
   // untitled buffer), then close it. Cancel/failure keeps the tab open. TABS-05.
+  // A file that changed on disk is not overwritten: the tab stays, with its ConflictBar. EXT-03.
   const handleSaveCloseTab = useCallback(async () => {
     const prompt = closeTabPrompt;
     if (!prompt) return;
     const data = getTabSaveData(prompt.id);
     if (!data) { setCloseTabPrompt(null); return; }
+    if (conflictedTabsRef.current.has(prompt.id)) {
+      setCloseTabPrompt(null);
+      holdForConflict(prompt.id, data.fileName);
+      return;
+    }
 
     // The tab survives unless its contents reached the disk. That guarantee used to be two
     // bare `return`s inline here; it is saveThenClose's whole job now, and it has tests.
+    // expectedMtime is 0 for an untitled buffer, and saveDocument sends none then.
+    const expectedMtime = data.filePath ? knownMtimeOf(prompt.id) : undefined;
     const outcome = await saveThenClose(data, {
       pickPath: (defaultName) =>
         save({ filters: [{ name: "Markdown", extensions: ["md"] }], defaultPath: defaultName }),
-      save: (path, content) => saveDocument(path, content),
+      save: (path, content) => saveDocument(path, content, { expectedMtime }),
       onError: (msg) => showToast(msg || "Failed to save file", "error"),
+      isConflict: isConflictError,
     });
-    if (outcome.action === "keep-open") return;
+    if (outcome.action === "keep-open") {
+      if (outcome.reason === "conflict") {
+        setCloseTabPrompt(null);
+        holdForConflict(prompt.id, data.fileName);
+      }
+      return;
+    }
     // The tab we just wrote is usually NOT the one on screen, and it may be the file
     // that links here: close a tab holding an unsaved `[[Foo]]` while Foo.md is open
     // and the mention only now exists on disk. Nothing else would tell the panel, as
@@ -1274,7 +1332,7 @@ function AppContent() {
     bumpSaved();
     setCloseTabPrompt(null);
     finalizeCloseTab(prompt.id);
-  }, [closeTabPrompt, getTabSaveData, showToast, finalizeCloseTab, bumpSaved]);
+  }, [closeTabPrompt, getTabSaveData, showToast, finalizeCloseTab, bumpSaved, knownMtimeOf, holdForConflict]);
 
   const handleDiscardCloseTab = useCallback(() => {
     const prompt = closeTabPrompt;

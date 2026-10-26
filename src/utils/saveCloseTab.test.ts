@@ -72,6 +72,34 @@ describe("saveThenClose", () => {
         expect(deps.onError).toHaveBeenCalledWith("No space left on device");
     });
 
+    // The caller shows a choice for this one, so it is not reported as a failure on top.
+    it("keeps the tab when the file changed on disk, and does not call it an error", async () => {
+        const deps = io({
+            save: vi.fn(async () => {
+                throw "File changed on disk: /a.md";
+            }),
+            isConflict: (err) => String(err).startsWith("File changed on disk"),
+        });
+
+        const out = await saveThenClose(saved, deps);
+
+        expect(out).toEqual({ action: "keep-open", reason: "conflict" });
+        expect(deps.onError).not.toHaveBeenCalled();
+    });
+
+    it("treats a refused write as an ordinary failure when the caller cannot tell conflicts apart", async () => {
+        const deps = io({
+            save: vi.fn(async () => {
+                throw "File changed on disk: /a.md";
+            }),
+        });
+
+        const out = await saveThenClose(saved, deps);
+
+        expect(out).toEqual({ action: "keep-open", reason: "save-failed" });
+        expect(deps.onError).toHaveBeenCalledWith("File changed on disk: /a.md");
+    });
+
     it("keeps the tab when the write fails AFTER the user chose a location", async () => {
         const deps = io({
             pickPath: vi.fn(async () => "/chosen.md"),
