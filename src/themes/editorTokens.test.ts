@@ -19,7 +19,7 @@
 import { describe, it, expect } from "vitest";
 import { BUILTIN_THEMES, resolveTheme } from "./index";
 import { contrastRatio } from "./contrast";
-import { JSON_EDITOR_TEXT_TOKENS } from "../components/SettingsJsonEditor";
+import { JSON_EDITOR_TEXT_TOKENS } from "./jsonEditorHighlight";
 
 /** The surfaces the editor's text is actually drawn on. */
 const SURFACES = ["--bg-input", "--bg-hover"] as const;

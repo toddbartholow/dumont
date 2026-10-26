@@ -2,7 +2,7 @@
 // See NOTICE for attribution and license terms.
 
 import { useState, useRef, useEffect } from 'react';
-import { useTheme } from '../context/ThemeContext';
+import { useTheme } from '../context/useTheme';
 import { useDropdownKeyboard } from '../hooks/useDropdownKeyboard';
 import { Select, ThemeSwatch, type SelectOption } from './Select';
 import { FontSizeField } from './FontSizeField';

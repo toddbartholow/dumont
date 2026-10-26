@@ -27,7 +27,7 @@ import {
     type EditorResult,
     type EditorState,
 } from "../utils/editorActions";
-import { useSetting } from "../settings/SettingsProvider";
+import { useSetting } from "../settings/useSettings";
 import { highlightCaretLine } from "../utils/caretLine";
 import { FindReplaceBar } from "./FindReplaceBar";
 import { FormatToolbar } from "./FormatToolbar";
@@ -39,7 +39,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { matchWikilinkPrefix, rankFileNames, toWikiName } from "../utils/wikilinkComplete";
 import { applyTableOp, findTableAt, locateCell, type Align } from "../utils/tableModel";
 import type { Scroller } from "../utils/scrollSync";
-import { useTheme } from "../context/ThemeContext";
+import { useTheme } from "../context/useTheme";
 import { ensureFontLoaded } from "../fonts";
 import { fontStack } from "../utils/appearanceOptions";
 import { Minimap, MINIMAP_WIDTH } from "./Minimap";

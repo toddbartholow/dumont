@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, memo } from "react";
-import { useTheme } from "../context/ThemeContext";
+import { useTheme } from "../context/useTheme";
 import { themeType, type ThemeDef } from "../themes";
 
 // Single shared mermaid module promise — loaded only on first use.
@@ -131,7 +131,3 @@ function MermaidBlockImpl({ code }: MermaidBlockProps) {
 // Memoized so a parent re-render with unchanged `code` skips re-running the
 // effect entirely (the cache covers remounts; memo covers same-position renders).
 export const MermaidBlock = memo(MermaidBlockImpl);
-
-/** Quick check used in the components map to short-circuit normal code rendering. */
-export const isMermaidLanguage = (className: string | undefined): boolean =>
-    typeof className === "string" && /\blanguage-mermaid\b/.test(className);

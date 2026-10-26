@@ -7,13 +7,15 @@ import { remarkDefinitionList, defListHastHandlers } from "remark-definition-lis
 import remarkCustomHeadingId from "../utils/remarkCustomHeadingId";
 import rehypeHighlight from "rehype-highlight";
 import rehypeRaw from "rehype-raw";
-import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
+import rehypeSanitize from "rehype-sanitize";
+import { SANITIZE_SCHEMA } from "../utils/sanitizeSchema";
 import { invoke } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { parseFrontmatter, serializeFrontmatter, type FrontmatterValue } from "../utils/frontmatter";
 import { READER_WIDTHS, DEFAULT_READER_WIDTH } from "../utils/readerWidth";
 import type { Scroller } from "../utils/scrollSync";
-import { MermaidBlock, isMermaidLanguage } from "./MermaidBlock";
+import { MermaidBlock } from "./MermaidBlock";
+import { isMermaidLanguage } from "../utils/mermaidLanguage";
 
 // Detect KaTeX-style math so we only load the heavy katex bundle when needed.
 // $$...$$ for block math, $...$ for inline math (not preceded/followed by digit
@@ -54,39 +56,7 @@ const REMARK_REHYPE_OPTIONS = { handlers: defListHastHandlers } as const;
 // the source-line stamper run LAST so sanitize can't strip their output. A
 // booby-trapped downloaded .md is a real vector in a desktop app that exposes
 // a Tauri IPC bridge, so sanitizing is not optional even for "local" files.
-//
-// The schema is GitHub's defaultSchema plus two narrow additions:
-//  - `math`/`math-inline`/`math-display` classes on span/div, so remark-math's
-//    markers survive sanitize and rehype-katex (which runs after) can find them;
-//  - the `wikilink:` href protocol, so our internal links aren't stripped.
-// Exported so the security regression test drives the REAL schema, not a copy of
-// it (src/security/xssSanitize.test.tsx). A copy would pass while this drifts.
-export const SANITIZE_SCHEMA = {
-    ...defaultSchema,
-    // remark-rehype already prefixes every footnote id AND its matching href
-    // with `user-content-`; sanitize's default clobber pass would prefix the
-    // id a SECOND time (ids are on its clobber list, fragment hrefs are not),
-    // so footnote refs and back-arrows pointed at ids that don't exist — in
-    // the app and in every export. Markdown-generated ids stay clobber-safe
-    // via the remark prefix. The cost: ids on raw HTML are no longer
-    // rewritten; acceptable since the schema allows none of the elements
-    // DOM-clobbering needs (form/iframe/object/embed) and the bundled app
-    // never reads bare window globals an id could shadow.
-    clobberPrefix: "",
-    // `mark` is not in GitHub's default allowlist; the ==highlight== syntax
-    // (remark-flexible-markers) emits it, so it must survive sanitize. `sup`,
-    // `sub`, `dl`, `dt` and `dd` are already in defaultSchema.tagNames. SYNTAX-01.
-    tagNames: [...(defaultSchema.tagNames ?? []), "mark"],
-    attributes: {
-        ...defaultSchema.attributes,
-        span: [...(defaultSchema.attributes?.span ?? []), ["className", "math", "math-inline", "math-display"]],
-        div: [...(defaultSchema.attributes?.div ?? []), ["className", "math", "math-inline", "math-display"]],
-    },
-    protocols: {
-        ...defaultSchema.protocols,
-        href: [...(defaultSchema.protocols?.href ?? []), "wikilink"],
-    },
-} as typeof defaultSchema;
+// The schema is in utils/sanitizeSchema.ts.
 
 // react-markdown's default urlTransform drops any href whose scheme isn't in a
 // small safe list — which silently kills our internal `wikilink:` links (the

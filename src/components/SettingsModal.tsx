@@ -4,8 +4,8 @@
 import { lazy, Suspense, useCallback, useEffect, useId, useRef, useState, type ReactNode } from "react";
 import type { SettingsJsonHandle } from "./SettingsJsonEditor";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
-import { useTheme } from "../context/ThemeContext";
-import { useSetting, useSettings } from "../settings/SettingsProvider";
+import { useTheme } from "../context/useTheme";
+import { useSetting, useSettings } from "../settings/useSettings";
 import { SETTING_BY_KEY } from "../settings/schema";
 import { settingsPath } from "../settings/store";
 

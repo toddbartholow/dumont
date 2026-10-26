@@ -11,7 +11,8 @@
 import { describe, it, expect, afterEach, beforeEach, vi } from "vitest";
 import { render, screen, act, cleanup } from "@testing-library/react";
 import { invoke } from "@tauri-apps/api/core";
-import { SettingsProvider, useSetting, useSettings } from "./SettingsProvider";
+import { SettingsProvider } from "./SettingsProvider";
+import { useSetting, useSettings } from "./useSettings";
 import { defaultSettings } from "./schema";
 
 const mockInvoke = vi.mocked(invoke);
