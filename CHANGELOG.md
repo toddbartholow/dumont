@@ -11,6 +11,8 @@ divider is the upstream project's changelog, retained for provenance.
 
 ## [Unreleased]
 
+## [1.1.5] - 2026-10-26
+
 ### Fixed
 
 - **No white square in the editor's corner with word wrap off.** Where the
