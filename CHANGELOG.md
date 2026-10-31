@@ -11,6 +11,8 @@ divider is the upstream project's changelog, retained for provenance.
 
 ## [Unreleased]
 
+## [1.1.7] - 2026-10-31
+
 ### Fixed
 
 - **Find in the reader now has Match case and Regex.** Only the editor's find
