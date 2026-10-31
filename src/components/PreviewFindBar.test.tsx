@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { render, screen, cleanup } from "@testing-library/react";
+import { render, screen, cleanup, fireEvent, act } from "@testing-library/react";
 import { createRef } from "react";
 import { PreviewFindBar } from "./PreviewFindBar";
 
@@ -22,6 +22,59 @@ function mount(focusSignal: number) {
 }
 
 const queryBox = () => screen.getByLabelText("Find in document");
+
+// Match case and Regex, which this bar lacked while the editor's had both, so
+// Find behaved differently depending on which view you were in.
+describe("PreviewFindBar options", () => {
+    afterEach(() => vi.useRealTimers());
+
+    function setup(text: string) {
+        vi.useFakeTimers();
+        const root = document.createElement("div");
+        root.innerHTML = text;
+        document.body.appendChild(root);
+        const rootRef = createRef<HTMLElement>() as React.RefObject<HTMLElement | null>;
+        rootRef.current = root;
+        render(<PreviewFindBar rootRef={rootRef} onClose={vi.fn()} focusSignal={0} />);
+        return root;
+    }
+
+    const type = (value: string) => {
+        fireEvent.change(queryBox(), { target: { value } });
+        act(() => { vi.advanceTimersByTime(200); });
+    };
+    const label = () => screen.getByRole("search").textContent ?? "";
+
+    it("ignores case by default and honours Match case when pressed", () => {
+        setup("<p>Alpha alpha ALPHA</p>");
+        type("alpha");
+        expect(label()).toContain("1 of 3");
+
+        fireEvent.click(screen.getByRole("button", { name: "Match case" }));
+        act(() => { vi.advanceTimersByTime(200); });
+        expect(screen.getByRole("button", { name: "Match case" }).getAttribute("aria-pressed")).toBe("true");
+        expect(label()).toContain("1 of 1");
+    });
+
+    it("treats the query as a pattern when Regex is pressed", () => {
+        setup("<p>a1 b22 <strong>c3</strong></p>");
+        type("\\d+");
+        expect(label()).toContain("No results");
+
+        fireEvent.click(screen.getByRole("button", { name: "Regex" }));
+        act(() => { vi.advanceTimersByTime(200); });
+        // One hit per run of digits, including the one inside <strong> and the
+        // one that ends its text node (the matchLength end-of-text case).
+        expect(label()).toContain("1 of 3");
+    });
+
+    it("says Invalid pattern for a regex that does not compile", () => {
+        setup("<p>alpha</p>");
+        fireEvent.click(screen.getByRole("button", { name: "Regex" }));
+        type("(");
+        expect(label()).toContain("Invalid pattern");
+    });
+});
 
 describe("PreviewFindBar focus", () => {
     it("focuses the query box on mount", () => {

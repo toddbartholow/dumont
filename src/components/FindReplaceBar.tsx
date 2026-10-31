@@ -220,7 +220,7 @@ export function FindReplaceBar({
                     className="flex-1 px-2 py-1 text-sm bg-[var(--bg-input)] border border-[var(--border)] rounded text-[var(--text-primary)] outline-none focus:border-[var(--accent)]"
                     aria-label="Find text"
                 />
-                <span className={`text-[11px] tabular-nums whitespace-nowrap min-w-[80px] text-right ${patternInvalid ? "text-[var(--danger)]" : "text-[var(--text-secondary)]"}`}>
+                <span className={`text-[11px] tabular-nums whitespace-nowrap min-w-[80px] text-right ${patternInvalid ? "text-[var(--danger-text)]" : "text-[var(--text-secondary)]"}`}>
                     {totalLabel}
                 </span>
                 <button onClick={prev} title="Previous (Shift+Enter)" aria-label="Previous match" className="w-6 h-6 rounded hover:bg-[var(--bg-hover)] text-[var(--text-secondary)] flex items-center justify-center">

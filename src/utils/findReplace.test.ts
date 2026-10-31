@@ -1,5 +1,35 @@
 import { describe, it, expect } from "vitest";
-import { findAll, matchLength, expandReplacement, replaceOne, replaceAllMatches, isValidPattern } from "./findReplace";
+import { findAll, findSpans, matchLength, expandReplacement, replaceOne, replaceAllMatches, isValidPattern } from "./findReplace";
+
+describe("findSpans", () => {
+    it("returns start and end for plain and regex matches", () => {
+        expect(findSpans("Foo foo", "foo", false, false)).toEqual([[0, 3], [4, 7]]);
+        expect(findSpans("Foo foo", "foo", true, false)).toEqual([[4, 7]]);
+        expect(findSpans("a1 b22", "\\d+", false, true)).toEqual([[1, 2], [4, 6]]);
+    });
+
+    it("drops zero-width regex matches", () => {
+        expect(findSpans("abc", "x*", false, true)).toEqual([]);
+        expect(findSpans("axxb", "x*", false, true)).toEqual([[1, 3]]);
+    });
+
+    it("returns nothing for an invalid regex", () => {
+        expect(findSpans("abc", "(", false, true)).toEqual([]);
+    });
+});
+
+describe("matchLength near the end of the text", () => {
+    // The pattern's source is longer than the text left after the match. That
+    // used to fail a length check meant for plain mode and come back 0.
+    it("measures a regex match shorter than its pattern", () => {
+        expect(matchLength("x 5", 2, "\\d+", false, true)).toBe(1);
+        expect(matchLength("5", 0, "[0-9]+\\s*", false, true)).toBe(1);
+    });
+
+    it("still rejects a plain needle that would run past the end", () => {
+        expect(matchLength("abc", 2, "cd", false, false)).toBe(0);
+    });
+});
 
 describe("findAll", () => {
     it("returns no matches for an empty needle", () => {
