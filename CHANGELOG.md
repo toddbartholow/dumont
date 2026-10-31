@@ -11,6 +11,17 @@ divider is the upstream project's changelog, retained for provenance.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Find in the reader now has Match case and Regex.** Only the editor's find
+  bar had them, so Find behaved differently depending on which view you were
+  in. The reader's bar now has the same two toggles and says "Invalid pattern"
+  for a regex that does not compile.
+- **A regex match near the end of the document is selected in the editor.** A
+  match was dropped when the pattern itself was longer than the text left after
+  it (`\d+` against a final `5`), so it counted toward the total but the cursor
+  never moved to it.
+
 ## [1.1.6] - 2026-10-26
 
 ### Fixed

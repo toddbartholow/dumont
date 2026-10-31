@@ -67,6 +67,22 @@ export function findAll(haystack: string, needle: string, caseSensitive: boolean
 }
 
 /**
+ * Every non-empty match of `needle` in `haystack` as `[start, end)` spans, left
+ * to right. Zero-width regex matches (`x*`, `^`) are dropped: there is nothing
+ * to highlight or step to, and a pattern like `x*` would otherwise produce one
+ * per character. Used by the reader's find bar, which needs the length of each
+ * hit to build a DOM Range, not just where it starts.
+ */
+export function findSpans(haystack: string, needle: string, caseSensitive: boolean, regex: boolean): Array<[number, number]> {
+    const spans: Array<[number, number]> = [];
+    for (const start of findAll(haystack, needle, caseSensitive, regex)) {
+        const len = matchLength(haystack, start, needle, caseSensitive, regex);
+        if (len > 0) spans.push([start, start + len]);
+    }
+    return spans;
+}
+
+/**
  * Length of the match that begins exactly at `idx`, or `0` if there is no match
  * there. Regex mode re-runs the pattern anchored at `idx`; plain mode checks that
  * the needle is genuinely present at that offset.
@@ -81,8 +97,11 @@ export function findAll(haystack: string, needle: string, caseSensitive: boolean
  * matches must be a no-op, never a crash.
  */
 export function matchLength(haystack: string, idx: number, needle: string, caseSensitive: boolean, regex: boolean): number {
-    if (idx < 0 || idx + needle.length > haystack.length) return 0;
+    if (idx < 0 || idx > haystack.length) return 0;
     if (regex) {
+        // No length check against `needle` here: a pattern's source length says
+        // nothing about its match length. `\d+` is three characters and matches
+        // one, so bounding on it rejected every regex hit near the end of the text.
         try {
             const re = new RegExp(needle, caseSensitive ? "g" : "gi");
             re.lastIndex = idx;
@@ -92,6 +111,7 @@ export function matchLength(haystack: string, idx: number, needle: string, caseS
             return 0;
         }
     }
+    if (idx + needle.length > haystack.length) return 0;
     const found = haystack.slice(idx, idx + needle.length);
     const there = caseSensitive ? found === needle : found.toLowerCase() === needle.toLowerCase();
     return there ? needle.length : 0;
