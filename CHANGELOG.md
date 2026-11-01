@@ -11,6 +11,131 @@ divider is the upstream project's changelog, retained for provenance.
 
 ## [Unreleased]
 
+### Security
+
+- **The app no longer has blanket access to your files.** Exports were
+  written through a filesystem permission that let the app's web view read,
+  list and overwrite any file you can. Exports now go through one narrow
+  command that writes only the file you picked in the save dialog, atomically.
+- **The AI key is no longer sent over plain http to another machine.** An
+  `http://` endpoint on a remote host would have carried the key in clear
+  text. Use `https://`, or remove the key for a server that does not need one.
+  Local servers on `localhost` and keyless endpoints work as before, and
+  Settings warns when a saved key meets a plain-http remote endpoint.
+- **Links in AI replies no longer navigate the app.** A reply can be steered
+  by the open document, and clicking a link in it loaded the page in the app
+  window itself, discarding unsaved work. Web and mail links now open in your
+  browser or mail app, other links are plain text, and images in replies show
+  their alt text instead of loading.
+- **Links to other files no longer navigate Dumont away from your document.**
+  Clicking a relative link to a PDF, image or folder replaced the app window
+  with that file, losing unsaved edits. It now shows the file in your file
+  manager. Middle-clicks on links are blocked too.
+- **Mermaid diagrams are sanitized before they are shown.** The reader now
+  runs mermaid's SVG through the same DOMPurify pass exports use, instead of
+  relying on mermaid's strict mode alone. Diagrams with HTML labels keep them.
+
+### Fixed
+
+- **The last session reopens every tab again.** At launch the app saved an
+  empty session over the real one before reading it back, so only the single
+  last file came back.
+- **A tab you open while the last session is restoring is kept.** The restore
+  replaced the whole tab list when it finished, so a note started with Ctrl+N,
+  a dropped file, or a file double-clicked during startup was lost along with
+  its text. The restored tabs are now added alongside it, and your tab stays
+  in front.
+- **New File works after typing in a fresh Untitled tab.** It mistook the tab
+  you were typing in for an empty one and did nothing.
+- **Opening a file clears the previous file's pending review.** An AI
+  suggestion or a version-history restore left on screen when you opened
+  another file appeared over the new file, and accepting it wrote the old
+  file's text in.
+- **Pressing Replace twice quickly no longer corrupts the text.** A second
+  Replace inside the find bar's refresh window cut at the old positions,
+  turning "foo foo foo" into "xoo foo". Replace and Replace All now search the
+  text as it is when you press them.
+- **A paste that takes a moment lands where you pasted it.** Rich-text and
+  image pastes read the cursor only after converting or saving, so typing in
+  the meantime moved the paste, and switching tabs put it in the other
+  document. They now go where you pasted, and are dropped if the document is
+  gone.
+- **The AI assist bubble no longer replaces the wrong text.** Replace used the
+  positions from when the bubble opened, so typing above the selection while
+  the AI worked overwrote other words. It now follows the selection through
+  your edits, refuses with a message if you changed the selected words, and
+  closes when you switch tabs.
+- **The AI review closes once every change is accepted or rejected.**
+  Resolving changes one at a time left the review banner up with nothing left
+  in it. The same applies when restoring a version from history.
+- **Tab and Enter in lists behave like other Markdown editors.** Tab and
+  Shift+Tab nest or un-nest the whole item, indenting under `1.` by three
+  spaces so it really nests. Enter on an empty nested item steps out one level
+  instead of ending the list, and Enter right after the marker of an item with
+  text no longer deletes the marker. Tab with a few words selected indents the
+  line instead of deleting them.
+- **Tab in the last cell of a table at the end of a document adds a row.** It
+  used to insert two spaces in the cell instead.
+- **Selected text is readable in the light themes.** In Light, Paper,
+  Solarized Light and Catppuccin Latte, selected text turned dark on dark
+  whenever the editor lost focus, and on every extra selection range. Each now
+  uses a light selection color behind dark text. Solarized Dark's selection is
+  a step lighter so it stands out from the page.
+- **Images refresh when they change on disk.** An edited screenshot now
+  updates when you switch back to Dumont, without flashing a placeholder. A
+  note that embeds the same image many times reads it once.
+- **Embedded base64 images display.** PNG, JPEG, GIF, WebP, BMP and AVIF data
+  images now render, including in untitled documents. An image that cannot be
+  loaded shows an error card instead of a placeholder that never finishes.
+- **Copying from the reader leaves out icon text.** Copying a heading no
+  longer pastes "link" after it, and copying code no longer picks up the
+  "Copy" button label.
+- **`[[...]]` inside code stays code.** Wikilink syntax in code blocks, inline
+  code and math is no longer turned into links.
+- **Headings in non-Latin scripts get their own anchors.** Chinese, Japanese,
+  Cyrillic and Greek headings each get a distinct id, instead of all becoming
+  "section".
+- **The outline and the palette's heading list show only real headings.** `#`
+  lines inside code blocks and frontmatter are no longer listed, titles show
+  text instead of raw Markdown, and setext headings appear.
+- **One task item no longer removes the bullets from a whole list.** Only the
+  task items lose their bullets, in the reader and in exports.
+- **Math renders correctly in HTML and PDF exports.** Exports now include
+  KaTeX's stylesheet and the fonts the formulas use.
+- **Wikilinks export as text instead of dead links.** HTML, PDF and Word
+  exports no longer contain links that go nowhere, or stray internal
+  attributes.
+- **Files that start with a UTF-8 byte order mark show their frontmatter
+  again.** The invisible mark kept the YAML block from being recognized. It is
+  stripped on open and put back on save, so the file on disk keeps it.
+- **Editing in the Properties card keeps your frontmatter's comments and
+  formatting.** Any change in the card rewrote the whole YAML block, deleting
+  comments and re-quoting values. Now only the line of the field you changed
+  is rewritten.
+- **PDF export no longer leaves temporary files behind.** On Windows each
+  export left a copy of the document in the temp folder, and a failed export
+  always did.
+- **The AI privacy note says what is actually sent.** It claimed only your
+  selected text was sent, unencrypted. The AI panel sends the whole open
+  document and recent chat history, and https endpoints are encrypted in
+  transit.
+- **Clicking a tab puts the cursor in the note.** Focus stayed on the tab, so
+  typing went nowhere and Backspace closed the document. Backspace no longer
+  closes a tab; Delete on a tab you have tabbed to still does.
+- **Unsaved tabs show a bullet before the name.** A dirty tab now reads
+  "• name", like the window title, and screen readers hear "name (unsaved
+  changes)".
+- **Side panels no longer cover the first tabs.** With a side panel open, the
+  tab bar and the changed-on-disk bar now sit beside it, as the document
+  already did.
+- **The Files panel stays open after you pick a file.** Opening the next file
+  took two clicks.
+- **Screen readers no longer read the status bar on every keystroke.** Only
+  Saved and Unsaved are announced now, and the word count says "1 word"
+  instead of "1 words".
+- **Image placeholders no longer produce invalid HTML.** Loading and error
+  placeholders were `<div>`s inside paragraphs.
+
 ## [1.1.8] - 2026-11-01
 
 ### Fixed
