@@ -2297,6 +2297,7 @@ function AppContent() {
                   onWikilinkClick={handleWikilinkClick}
                   onNavigateRelative={handleNavigateRelative}
                   readerWidth={readerWidth}
+                  onNotify={showToast}
                 />
               </Suspense>
 
