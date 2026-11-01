@@ -2,10 +2,11 @@
 // explains where it sits in the plugin order and why it is not optional.
 import { defaultSchema } from "rehype-sanitize";
 
-// The schema is GitHub's defaultSchema plus two narrow additions:
+// The schema is GitHub's defaultSchema plus three narrow additions:
 //  - `math`/`math-inline`/`math-display` classes on span/div, so remark-math's
 //    markers survive sanitize and rehype-katex (which runs after) can find them;
-//  - the `wikilink:` href protocol, so our internal links aren't stripped.
+//  - the `wikilink:` href protocol, so our internal links aren't stripped;
+//  - the `data:` src protocol, narrowed to raster images by the URL transform.
 // Its own module so the security regression test drives the REAL schema, not a
 // copy of it (src/security/xssSanitize.test.tsx). A copy would pass while this
 // drifts.
@@ -33,5 +34,10 @@ export const SANITIZE_SCHEMA = {
     protocols: {
         ...defaultSchema.protocols,
         href: [...(defaultSchema.protocols?.href ?? []), "wikilink"],
+        // `data` for base64-embedded images, which many tools write. Only
+        // <img> may carry a src under this schema, and the preview's URL
+        // transform then admits raster image types alone (utils/imageSources):
+        // data:image/svg+xml and every non-image data: URL are still dropped.
+        src: [...(defaultSchema.protocols?.src ?? []), "data"],
     },
 } as typeof defaultSchema;

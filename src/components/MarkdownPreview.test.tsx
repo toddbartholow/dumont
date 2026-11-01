@@ -342,3 +342,93 @@ describe("links never navigate the app window", () => {
         expect(container.querySelector("[node]")).toBeNull();
     });
 });
+
+describe("image sources", () => {
+    const PNG = "data:image/png;base64,iVBORw0KGgo=";
+
+    it("shows a raster data: image, even in an untitled buffer", async () => {
+        const { container } = renderPreview(`![dot](${PNG})`);
+        await waitFor(() => expect(container.querySelector("img")?.getAttribute("src")).toBe(PNG));
+    });
+
+    it("never displays an SVG or non-image data: URL", async () => {
+        const { container } = renderPreview(
+            "![svg](data:image/svg+xml;base64,PHN2Zz4=)\n\n<img src=\"data:text/html,<b>x</b>\">",
+            { filePath: "/notes/doc.md" },
+        );
+        await waitFor(() => expect(container.textContent).toContain("Failed to load image"));
+        expect(container.querySelector("img")).toBeNull();
+        expect(container.innerHTML).not.toMatch(/data:(image\/svg|text\/html)/);
+    });
+
+    it("shows the error card, not an endless skeleton, when a relative image cannot resolve", async () => {
+        const { container } = renderPreview("![local](pic.png)"); // no filePath: unsaved buffer
+        await waitFor(() => expect(container.textContent).toContain("Failed to load image: pic.png"));
+        expect(container.querySelector(".animate-pulse")).toBeNull();
+    });
+
+    // A <div> inside a <p> is invalid HTML: React warns, and a parser reading an
+    // export closes the paragraph early.
+    it("renders its placeholders as spans inside the paragraph", async () => {
+        vi.mocked(invoke).mockImplementation((() => new Promise(() => {})) as typeof invoke);
+        const { container } = renderPreview("text ![a](never.png) and ![b](../escape.png)", { filePath: "/notes/doc.md" });
+        await waitFor(() => {
+            expect(container.querySelector("p .animate-pulse")).toBeTruthy();
+            expect(container.querySelector("p")!.textContent).toContain("Failed to load image");
+        });
+        expect(container.querySelector("p div")).toBeNull();
+        vi.mocked(invoke).mockImplementation((async () => null) as typeof invoke);
+    });
+});
+
+describe("local image refresh", () => {
+    it("re-reads an image changed on disk when the window regains focus, without a skeleton flash", async () => {
+        let mtime = 100;
+        const reads: string[] = [];
+        let holdReads = false;
+        let release = () => {};
+        vi.mocked(invoke).mockImplementation(((cmd: string, args: { relPath?: string; path?: string }) => {
+            if (cmd === "get_file_info") return Promise.resolve({ modified: mtime });
+            if (cmd === "read_image_file") {
+                reads.push(args.relPath!);
+                if (!holdReads) return Promise.resolve(new ArrayBuffer(4));
+                return new Promise<unknown>((resolve) => { release = () => resolve(new ArrayBuffer(4)); });
+            }
+            return Promise.resolve(null);
+        }) as typeof invoke);
+        let made = 0;
+        const revoked: string[] = [];
+        Object.assign(URL, {
+            createObjectURL: vi.fn(() => `blob:r${++made}`),
+            revokeObjectURL: vi.fn((u: string) => revoked.push(u)),
+        });
+
+        const { container } = renderPreview("![a](refresh-me.png) ![b](refresh-me.png)", { filePath: "/focus/doc.md" });
+        await waitFor(() => {
+            const srcs = Array.from(container.querySelectorAll("img")).map((i) => i.getAttribute("src"));
+            expect(srcs).toEqual(["blob:r1", "blob:r1"]);
+        });
+        expect(reads).toEqual(["refresh-me.png"]); // two references, one read
+
+        // Focus without a change: no re-read.
+        window.dispatchEvent(new Event("focus"));
+        await new Promise((r) => setTimeout(r, 20));
+        expect(reads.length).toBe(1);
+
+        mtime = 200;
+        holdReads = true;
+        window.dispatchEvent(new Event("focus"));
+        await waitFor(() => expect(reads.length).toBe(2));
+        // The old picture stays up while the new one loads.
+        expect(container.querySelector(".animate-pulse")).toBeNull();
+        expect(container.querySelector("img")?.getAttribute("src")).toBe("blob:r1");
+        release();
+        await waitFor(() => {
+            const srcs = Array.from(container.querySelectorAll("img")).map((i) => i.getAttribute("src"));
+            expect(srcs).toEqual(["blob:r2", "blob:r2"]);
+        });
+        expect(reads.length).toBe(2);
+        expect(revoked).toEqual(["blob:r1"]);
+        vi.mocked(invoke).mockImplementation((async () => null) as typeof invoke);
+    });
+});
