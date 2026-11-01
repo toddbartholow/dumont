@@ -6,6 +6,7 @@ import {
   nextActiveAfterClose,
   nextUntitledName,
   findReusableUntitledTab,
+  mergeRestoredTabs,
   computeTabLabels,
   moveTab,
   closeTabDecision,
@@ -147,6 +148,27 @@ describe("findReusableUntitledTab", () => {
   });
   it("ignores saved files", () => {
     expect(findReusableUntitledTab([tab("1", "/a.md")])).toBeUndefined();
+  });
+});
+
+describe("mergeRestoredTabs", () => {
+  it("keeps a tab opened while the restore was reading, after the restored ones (BOOT-01)", () => {
+    const restored = [tab("r1", "/a.md"), tab("r2", "/b.md")];
+    const current = [tab("u1", null, "typed during boot", "")];
+    expect(mergeRestoredTabs(restored, current).map((t) => t.id)).toEqual(["r1", "r2", "u1"]);
+  });
+
+  it("drops a restored file that is already open, keeping the open tab and its edits", () => {
+    const restored = [tab("r1", "/a.md", "disk", "disk"), tab("r2", "/b.md")];
+    const current = [tab("u1", "/a.md", "edited", "disk")];
+    const merged = mergeRestoredTabs(restored, current);
+    expect(merged.map((t) => t.id)).toEqual(["r2", "u1"]);
+    expect(merged.find((t) => t.filePath === "/a.md")?.content).toBe("edited");
+  });
+
+  it("is just the restored list when nothing was opened meanwhile", () => {
+    const restored = [tab("r1", "/a.md")];
+    expect(mergeRestoredTabs(restored, [])).toEqual(restored);
   });
 });
 

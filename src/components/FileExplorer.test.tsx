@@ -73,3 +73,19 @@ describe("FileExplorer", () => {
         expect(screen.queryByText("deep.md")).toBeNull();
     });
 });
+
+describe("FileExplorer picking a file (#225)", () => {
+    // It closed itself after every pick, a holdover from when it was an overlay. It sits
+    // beside the note now, so the next file is one click away instead of two.
+    it("opens the file and stays open", async () => {
+        const onFileSelect = vi.fn();
+        const onClose = vi.fn();
+        render(<FileExplorer isOpen currentFilePath="/notes/a.md" onFileSelect={onFileSelect} onClose={onClose} />);
+        await settle(0, { entries: NOTES });
+
+        fireEvent.click(screen.getByText("a.md"));
+
+        expect(onFileSelect).toHaveBeenCalledWith("/notes/a.md");
+        expect(onClose).not.toHaveBeenCalled();
+    });
+});

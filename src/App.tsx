@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef, useMemo, lazy, Suspense } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo, lazy, Suspense, type CSSProperties } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { recentPathFromMenuId } from "./utils/menuActions";
 import { open, save, ask } from "@tauri-apps/plugin-dialog";
@@ -12,6 +12,8 @@ import { useTheme } from "./context/useTheme";
 import { TitleBar } from "./components/TitleBar";
 import { WelcomeScreen } from "./components/WelcomeScreen";
 import { CodeEditor, type FindActionRunner } from "./components/CodeEditor";
+// Already in the main chunk with CodeEditor; used to focus the editor after a tab click.
+import { EditorView } from "@codemirror/view";
 import { StatusBar } from "./components/StatusBar";
 import { ModeToggle, type ViewMode } from "./components/ModeToggle";
 import { ToastStack } from "./components/Toast";
@@ -94,6 +96,7 @@ import {
   setSavedViewMode,
   setSplitRatio,
 } from "./utils/persistence";
+import { claimBoot } from "./utils/boot";
 import { resolveRelativePath } from "./utils/resolveRelativePath";
 import { errMessage } from "./utils/errors";
 import { revealMainWindow } from "./utils/appWindow";
@@ -111,6 +114,7 @@ import {
   nextActiveAfterClose,
   nextUntitledName,
   findReusableUntitledTab,
+  mergeRestoredTabs,
   computeTabLabels,
   moveTab,
   closeTabDecision,
@@ -159,16 +163,17 @@ const AI_PANEL_WIDTH = 400;
 // every changed line end up underneath the panel.
 const LEFT_PANEL_WIDTH = 288;
 
+// The padding that keeps a region clear of the open side panels. The widths are
+// variables set on the app root (panelInsetVars); see there. RLL-03.
+const PANEL_INSET_STYLE: CSSProperties = {
+  paddingLeft: "var(--panel-inset-left)",
+  paddingRight: "var(--panel-inset-right)",
+  transition: "padding-left 0.15s ease, padding-right 0.15s ease",
+};
+
 // What the review banner says when Agent mode is the one proposing the change. A
 // version-history restore drives the same merge view and supplies its own label.
 const AI_REVIEW_LABEL = "AI suggested changes";
-
-// The launch-file resolution must run exactly once per webview load. React
-// StrictMode double-invokes effects in dev: without this guard the second run
-// would find the CLI file already consumed (the backend take()s it) and start
-// a racing last-session restore that can overwrite the just-opened file.
-// Module-level on purpose — StrictMode remounts share module state.
-let bootResolved = false;
 
 // The palette's theme commands come from the same list Settings renders, which is
 // the registry (src/themes). This was a fifth hand-kept copy of the theme names.
@@ -584,6 +589,11 @@ function AppContent() {
     try {
       const fileData = await invoke<FileData>("read_file", { path });
       if (stillWanted && !stillWanted()) return false;
+      // A pending AI or history review is a diff over the buffer it was made from, and
+      // that buffer is about to be replaced. applyTabToLive and handleNewFile already
+      // dropped it; this path did not, so opening a file left the previous file's
+      // proposal up over the new one, where accepting it wrote the old text in.
+      setProposedDoc(null);
       bumpDocSwap(); // new document → editor resets undo history. TABS-03.
       setFilePath(fileData.path);
       setFileName(fileData.name);
@@ -707,8 +717,8 @@ function AppContent() {
     // old push design raced the webview: on slow cold starts the event fired
     // before the listener existed and was lost, so the last-session restore
     // won and the app reopened the previous file instead of the clicked one.
-    if (bootResolved) return;
-    bootResolved = true;
+    // Once per webview load, StrictMode remounts included: see claimBoot.
+    if (!claimBoot()) return;
     (async () => {
       let cliFiles: string[] = [];
       try {
@@ -776,8 +786,22 @@ function AppContent() {
       }
 
       if (loaded.length === 0) {
-        setSession(null);
-        setLastFile(null);
+        // Forget the dead session, unless the user opened something while it was
+        // being read: that file is now the last one, and it is not ours to clear.
+        if (tabsRef.current.length === 0) {
+          setSession(null);
+          setLastFile(null);
+        }
+        setBooting(false);
+        return;
+      }
+      // The user already opened or started something while the restore was reading
+      // (Ctrl+N and typing, a dropped file, a .md forwarded by the single-instance
+      // plugin). Committing `loaded` as the whole list here used to discard that tab
+      // and everything typed into it. Merge the restored tabs in instead, and leave
+      // the user's tab, which is the live buffer, on screen. BOOT-01.
+      if (tabsRef.current.length > 0) {
+        commitTabs(mergeRestoredTabs(loaded, tabsRef.current));
         setBooting(false);
         return;
       }
@@ -1185,7 +1209,13 @@ function AppContent() {
   // active tab changes. Untitled buffers have no path and are omitted. The
   // active tab's caret line comes from the live currentLineRef (its snapshot
   // lags until the next switch). TABS-07.
+  //
+  // Not while booting. This effect also runs on mount, with no tabs yet, and it used to
+  // write an empty session straight over the saved one before the restore had read it
+  // (the restore awaits get_cli_files first), so only the single last file came back.
+  // Any tab opened during the restore is persisted once the restore has merged it in.
   useEffect(() => {
+    if (booting) return;
     const activeId = activeTabIdRef.current;
     const persistable = tabs.filter((t) => t.filePath);
     if (persistable.length === 0) {
@@ -1198,7 +1228,7 @@ function AppContent() {
     }));
     const activeIdx = persistable.findIndex((t) => t.id === activeId);
     setSession({ tabs: sessTabs, activeIndex: activeIdx < 0 ? 0 : activeIdx });
-  }, [tabs, activeTabId]);
+  }, [tabs, activeTabId, booting]);
 
   // Open a file: if it's already in a tab, just switch to it (preserving any
   // unsaved edits there); otherwise load it into a new tab. With tabs there's no
@@ -1486,13 +1516,16 @@ function AppContent() {
   // stays open in its tab, so nothing is discarded). Reuses a pristine empty
   // untitled tab if one exists, and numbers new ones Untitled-N.md. TABS-01/08.
   const handleNewFile = useCallback(() => {
+    // Snapshot BEFORE looking for a reusable tab. The active tab's entry lags the live
+    // buffer, so an Untitled tab the user has just typed into still reads empty there:
+    // it was "reused", which meant staying put, and New File did nothing. TABS-17.
+    snapshotActiveTab();
     const reusable = findReusableUntitledTab(tabsRef.current);
     if (reusable) {
       if (reusable.id !== activeTabIdRef.current) activateTab(reusable.id);
       setMode("code");
       return;
     }
-    snapshotActiveTab();
     bumpDocSwap(); // fresh Untitled buffer → editor resets undo history. TABS-03.
     const id = newTabId();
     const name = nextUntitledName(tabsRef.current);
@@ -2048,6 +2081,52 @@ function AppContent() {
     }
   }, [closeManyClean, activateTab]);
 
+  // A mouse click on a tab means "show me this note", so the note takes focus, as in
+  // VS Code. Focus used to stay on the tab: typing went nowhere, and Backspace, then one
+  // of the tab strip's keyboard close keys, closed the document. Keyboard navigation of
+  // the strip does not come through here and keeps focus. FOCUS-01.
+  //
+  // One frame later, so it runs after the browser's own mousedown focus (which lands on
+  // the tab) and after the activated tab has rendered. Whichever view is visible wins:
+  // the editor in code and split, the reader in preview.
+  const focusDocument = useCallback(() => {
+    requestAnimationFrame(() => {
+      const root = splitContainerRef.current;
+      if (!root) return;
+      const editorPane = root.querySelector<HTMLElement>("[data-split-left]");
+      const editorDom = editorPane?.querySelector<HTMLElement>(".cm-editor");
+      if (editorPane && editorPane.style.display !== "none" && editorDom) {
+        // The view's own focus(), not the content element's: it puts CodeMirror's
+        // selection back in the DOM, where a bare focus() lets the browser drop the
+        // caret at the top of the document.
+        EditorView.findFromDOM(editorDom)?.focus();
+        return;
+      }
+      // The reader's scroller, so Space, PageDown and the arrows scroll it. It is not
+      // focusable on its own; -1 keeps it out of the Tab order.
+      const reader = root.querySelector<HTMLElement>("[data-split-right] main");
+      if (!reader) return;
+      if (!reader.hasAttribute("tabindex")) reader.tabIndex = -1;
+      reader.focus({ preventScroll: true });
+    });
+  }, []);
+
+  // Space reserved on BOTH sides for whichever panels are open, so what is under them
+  // (the tab bar, the conflict bar, the editor and preview) reflows beside them instead
+  // of being covered. The panels are `fixed` (left-0 / right-0, from just below the
+  // title bar to just above the status bar), which is what keeps the window controls
+  // at the edge, and it is also why they take no layout space of their own and this
+  // padding has to stand in for them. min() mirrors each panel's own max width so a
+  // narrow window reserves only as much as the panel actually takes.
+  //
+  // Set once, as variables on the app root, and read by every inset region through
+  // PANEL_INSET_STYLE, so the regions cannot drift apart. Only the content used to be
+  // inset, and an open panel covered the first tabs. RLL-03.
+  const panelInsetVars = useMemo(() => ({
+    "--panel-inset-left": leftPanel ? `min(${LEFT_PANEL_WIDTH}px, 90vw)` : "0px",
+    "--panel-inset-right": showAIPanel ? `min(${AI_PANEL_WIDTH}px, 90vw)` : "0px",
+  }) as CSSProperties, [leftPanel, showAIPanel]);
+
   // Right-click menu on a tab: {id, x, y} while open. TABS-12.
   const [tabMenu, setTabMenu] = useState<{ id: string; x: number; y: number } | null>(null);
   const handleTabContextMenu = useCallback((id: string, x: number, y: number) => {
@@ -2055,7 +2134,7 @@ function AppContent() {
   }, []);
 
   return (
-    <div className="h-screen flex flex-col bg-[var(--bg-primary)] overflow-hidden transition-colors">
+    <div className="h-screen flex flex-col bg-[var(--bg-primary)] overflow-hidden transition-colors" style={panelInsetVars}>
       <TitleBar
         fileName={fileName ?? undefined}
         isDirty={isDirty}
@@ -2078,24 +2157,35 @@ function AppContent() {
 
       {/* Tab bar — always shown once a file is open (even with one tab), with a
           + button, so it's clear more files can be opened in tabs. TABS-01. */}
+      {/* Both bars sit under the side panels (which start right below the title
+          bar), so they take the same inset as the content. Without it the open
+          panel covered the first tabs, and the start of the conflict bar. The
+          wrapper, not the tab strip, is padded: padding inside the strip's own
+          scroller would let scrollIntoView park the active tab under the panel.
+          RLL-03. */}
       {hasFile && tabBarItems.length >= 1 && (
-        <TabBar
-          tabs={tabBarItems}
-          activeId={activeTabId}
-          onSelect={activateTab}
-          onClose={closeTab}
-          onNewTab={handleNewFile}
-          onReorder={handleReorderTab}
-          onContextMenu={handleTabContextMenu}
-        />
+        <div className="shrink-0 bg-[var(--bg-titlebar)]" style={PANEL_INSET_STYLE}>
+          <TabBar
+            tabs={tabBarItems}
+            activeId={activeTabId}
+            onSelect={activateTab}
+            onClose={closeTab}
+            onNewTab={handleNewFile}
+            onReorder={handleReorderTab}
+            onContextMenu={handleTabContextMenu}
+            onPointerActivate={focusDocument}
+          />
+        </div>
       )}
       {hasFile && activeTabId !== null && conflictedTabs.has(activeTabId) && (
-        <ConflictBar
-          fileName={fileName ?? "This file"}
-          onReload={handleConflictReload}
-          onKeepMine={handleConflictKeepMine}
-          focusSignal={conflictFocus}
-        />
+        <div className="shrink-0" style={PANEL_INSET_STYLE}>
+          <ConflictBar
+            fileName={fileName ?? "This file"}
+            onReload={handleConflictReload}
+            onKeepMine={handleConflictKeepMine}
+            focusSignal={conflictFocus}
+          />
+        </div>
       )}
 
       {/* Startup update check; invisible unless an update is actually available. */}
@@ -2132,18 +2222,7 @@ function AppContent() {
           <div
             ref={splitContainerRef}
             className="flex-1 overflow-hidden flex flex-row"
-            // Reserve space on BOTH sides for whichever panels are open, so the
-            // editor and preview reflow beside them instead of being covered. The
-            // panels are `fixed` (left-0 / right-0, above the status bar), which is
-            // what keeps the window controls at the edge, and it is also why they
-            // take no layout space of their own and this padding has to stand in for
-            // them. min() mirrors each panel's own max width so a narrow window
-            // reserves only as much as the panel actually takes.
-            style={{
-              paddingLeft: leftPanel ? `min(${LEFT_PANEL_WIDTH}px, 90vw)` : 0,
-              paddingRight: showAIPanel ? `min(${AI_PANEL_WIDTH}px, 90vw)` : 0,
-              transition: "padding-left 0.15s ease, padding-right 0.15s ease",
-            }}
+            style={PANEL_INSET_STYLE}
           >
             <div
               data-split-left
@@ -2187,6 +2266,7 @@ function AppContent() {
             )}
 
             <div
+              data-split-right
               className="overflow-hidden flex flex-col relative"
               style={{
                 display: mode === "preview" || mode === "split" ? "flex" : "none",
