@@ -356,7 +356,8 @@ function neutralizeCss(css: string): string {
  *    ligatures render as literal words like "link" without the icon font);
  *  - inlines blob: image URLs as data: URIs — blob URLs are session-bound, so
  *    exported files referencing them show broken images;
- *  - neutralizes wikilink: hrefs (app-internal scheme) into plain text.
+ *  - turns wikilinks into plain text, and drops the preview-only attributes
+ *    (source-line anchors, link markers, a stray react-markdown `node`);
  *  - re-sanitizes mermaid SVGs, the one rendered path that skips the Markdown
  *    sanitizer, so a shared export carries neither script nor a phone-home CSS
  *    url() (SECURITY, Finding 2).
@@ -369,11 +370,21 @@ export async function prepareExportHtml(rawHtml: string): Promise<string> {
     root.querySelectorAll("button").forEach((b) => b.remove());
     root.querySelectorAll(".material-symbols-outlined").forEach((s) => s.remove());
 
-    root.querySelectorAll("a[href^='wikilink:']").forEach((a) => {
+    // Wikilinks resolve by searching the vault, which a standalone file cannot
+    // do, so they export as their text. The preview renders them as href="#"
+    // plus data-wikilink, so the old `href^='wikilink:'` selector alone never
+    // matched and every export shipped dead "#" links.
+    root.querySelectorAll("a[data-wikilink], a[href^='wikilink:']").forEach((a) => {
         const span = doc.createElement("span");
         span.textContent = a.textContent;
         a.replaceWith(span);
     });
+
+    // Preview plumbing that means nothing in a shared file. Classes stay:
+    // KaTeX and highlight.js styling depends on them.
+    for (const attr of ["data-source-line", "data-relative-md", "data-wikilink", "node"]) {
+        root.querySelectorAll(`[${attr}]`).forEach((el) => el.removeAttribute(attr));
+    }
 
     for (const img of Array.from(root.querySelectorAll("img"))) {
         const src = img.getAttribute("src") || "";
