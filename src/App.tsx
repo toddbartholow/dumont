@@ -1501,13 +1501,16 @@ function AppContent() {
   // stays open in its tab, so nothing is discarded). Reuses a pristine empty
   // untitled tab if one exists, and numbers new ones Untitled-N.md. TABS-01/08.
   const handleNewFile = useCallback(() => {
+    // Snapshot BEFORE looking for a reusable tab. The active tab's entry lags the live
+    // buffer, so an Untitled tab the user has just typed into still reads empty there:
+    // it was "reused", which meant staying put, and New File did nothing. TABS-17.
+    snapshotActiveTab();
     const reusable = findReusableUntitledTab(tabsRef.current);
     if (reusable) {
       if (reusable.id !== activeTabIdRef.current) activateTab(reusable.id);
       setMode("code");
       return;
     }
-    snapshotActiveTab();
     bumpDocSwap(); // fresh Untitled buffer → editor resets undo history. TABS-03.
     const id = newTabId();
     const name = nextUntitledName(tabsRef.current);

@@ -939,3 +939,35 @@ describe("App session restore", () => {
         expect(activeTabName()).toBe("b.md");
     });
 });
+
+describe("App new file", () => {
+    const tabNames = () => screen.getAllByRole("tab").map((t) => t.getAttribute("title"));
+
+    // The reuse check read the active tab's snapshot, which lags the live buffer, so an
+    // Untitled tab with text in it looked pristine and New File stayed put. TABS-17.
+    it("opens a second note after typing in a fresh one, and keeps what was typed", async () => {
+        boot();
+        await press({ key: "n", ctrlKey: true });
+        fireEvent.click(await screen.findByRole("button", { name: /bold/i }));
+        await waitFor(() => expect(document.querySelector(".cm-content")!.textContent).toMatch(/\*\*/));
+
+        await press({ key: "n", ctrlKey: true });
+
+        await waitFor(() => expect(tabNames()).toEqual(["Untitled-1.md", "Untitled-2.md"]));
+        expect(document.querySelector(".cm-content")!.textContent).not.toMatch(/\*\*/);
+        await act(async () => {
+            fireEvent.mouseDown(screen.getByRole("tab", { name: /Untitled-1/ }), { button: 0 });
+        });
+        await waitFor(() => expect(document.querySelector(".cm-content")!.textContent).toMatch(/\*\*/));
+    });
+
+    it("still reuses an untouched Untitled tab instead of stacking another", async () => {
+        boot();
+        await press({ key: "n", ctrlKey: true });
+        await waitFor(() => expect(tabNames()).toEqual(["Untitled-1.md"]));
+
+        await press({ key: "n", ctrlKey: true });
+
+        expect(tabNames()).toEqual(["Untitled-1.md"]);
+    });
+});
