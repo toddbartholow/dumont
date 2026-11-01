@@ -121,6 +121,7 @@ const { default: App } = await import("./App");
 const dialog = await import("@tauri-apps/plugin-dialog");
 const updater = await import("@tauri-apps/plugin-updater");
 const { getSavedViewMode } = await import("./utils/persistence");
+const { resetBootForTests } = await import("./utils/boot");
 
 beforeAll(installCodeMirrorDomPolyfills);
 
@@ -874,5 +875,67 @@ describe("App saving on the way out", () => {
 
         await waitFor(() => expect(win.destroy).toHaveBeenCalled());
         expect(disk.get("/notes/a.md")).toMatch(/\*\*/);
+    });
+});
+
+/**
+ * The session restore at launch. It reads every file before it commits anything, and that can
+ * take seconds; the app is live meanwhile. BOOT-01.
+ */
+describe("App session restore", () => {
+    beforeEach(() => {
+        // Boot runs once per webview load, so once per module here unless it is reset.
+        resetBootForTests();
+    });
+
+    const seedSession = (...paths: string[]) => {
+        for (const p of paths) {
+            disk.set(p, `# ${p}\n`);
+            mtimes.set(p, 1);
+        }
+        localStorage.setItem(
+            "dumont:session",
+            JSON.stringify({ tabs: paths.map((path) => ({ path })), activeIndex: 0 }),
+        );
+    };
+    const tabNames = () => screen.getAllByRole("tab").map((t) => t.getAttribute("title"));
+    const activeTabName = () =>
+        screen.getAllByRole("tab").find((t) => t.getAttribute("aria-selected") === "true")?.getAttribute("title");
+
+    it("reopens every tab of the last session", async () => {
+        seedSession("/notes/a.md", "/notes/b.md");
+        boot();
+
+        await waitFor(() => expect(tabNames()).toEqual(["a.md", "b.md"]));
+        expect(activeTabName()).toBe("a.md");
+    });
+
+    it("keeps a new note started while the session was restoring, and leaves it in front", async () => {
+        seedSession("/notes/a.md", "/notes/b.md");
+        const release = holdReads();
+        boot();
+
+        await press({ key: "n", ctrlKey: true });
+        fireEvent.click(await screen.findByRole("button", { name: /bold/i }));
+        await waitFor(() => expect(document.querySelector(".cm-content")!.textContent).toMatch(/\*\*/));
+
+        await release();
+
+        await waitFor(() => expect(tabNames()).toEqual(["a.md", "b.md", "Untitled-1.md"]));
+        expect(activeTabName()).toBe("Untitled-1.md");
+        expect(document.querySelector(".cm-content")!.textContent).toMatch(/\*\*/);
+    });
+
+    it("does not open a second tab for a restored file the user already opened", async () => {
+        seedSession("/notes/a.md", "/notes/b.md");
+        const release = holdReads();
+        boot();
+
+        nextOpenPath = "/notes/b.md";
+        await press({ key: "o", ctrlKey: true });
+        await release();
+
+        await waitFor(() => expect(tabNames()).toEqual(["a.md", "b.md"]));
+        expect(activeTabName()).toBe("b.md");
     });
 });

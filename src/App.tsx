@@ -94,6 +94,7 @@ import {
   setSavedViewMode,
   setSplitRatio,
 } from "./utils/persistence";
+import { claimBoot } from "./utils/boot";
 import { resolveRelativePath } from "./utils/resolveRelativePath";
 import { errMessage } from "./utils/errors";
 import { revealMainWindow } from "./utils/appWindow";
@@ -111,6 +112,7 @@ import {
   nextActiveAfterClose,
   nextUntitledName,
   findReusableUntitledTab,
+  mergeRestoredTabs,
   computeTabLabels,
   moveTab,
   closeTabDecision,
@@ -162,13 +164,6 @@ const LEFT_PANEL_WIDTH = 288;
 // What the review banner says when Agent mode is the one proposing the change. A
 // version-history restore drives the same merge view and supplies its own label.
 const AI_REVIEW_LABEL = "AI suggested changes";
-
-// The launch-file resolution must run exactly once per webview load. React
-// StrictMode double-invokes effects in dev: without this guard the second run
-// would find the CLI file already consumed (the backend take()s it) and start
-// a racing last-session restore that can overwrite the just-opened file.
-// Module-level on purpose — StrictMode remounts share module state.
-let bootResolved = false;
 
 // The palette's theme commands come from the same list Settings renders, which is
 // the registry (src/themes). This was a fifth hand-kept copy of the theme names.
@@ -707,8 +702,8 @@ function AppContent() {
     // old push design raced the webview: on slow cold starts the event fired
     // before the listener existed and was lost, so the last-session restore
     // won and the app reopened the previous file instead of the clicked one.
-    if (bootResolved) return;
-    bootResolved = true;
+    // Once per webview load, StrictMode remounts included: see claimBoot.
+    if (!claimBoot()) return;
     (async () => {
       let cliFiles: string[] = [];
       try {
@@ -776,8 +771,22 @@ function AppContent() {
       }
 
       if (loaded.length === 0) {
-        setSession(null);
-        setLastFile(null);
+        // Forget the dead session, unless the user opened something while it was
+        // being read: that file is now the last one, and it is not ours to clear.
+        if (tabsRef.current.length === 0) {
+          setSession(null);
+          setLastFile(null);
+        }
+        setBooting(false);
+        return;
+      }
+      // The user already opened or started something while the restore was reading
+      // (Ctrl+N and typing, a dropped file, a .md forwarded by the single-instance
+      // plugin). Committing `loaded` as the whole list here used to discard that tab
+      // and everything typed into it. Merge the restored tabs in instead, and leave
+      // the user's tab, which is the live buffer, on screen. BOOT-01.
+      if (tabsRef.current.length > 0) {
+        commitTabs(mergeRestoredTabs(loaded, tabsRef.current));
         setBooting(false);
         return;
       }
@@ -1185,7 +1194,13 @@ function AppContent() {
   // active tab changes. Untitled buffers have no path and are omitted. The
   // active tab's caret line comes from the live currentLineRef (its snapshot
   // lags until the next switch). TABS-07.
+  //
+  // Not while booting. This effect also runs on mount, with no tabs yet, and it used to
+  // write an empty session straight over the saved one before the restore had read it
+  // (the restore awaits get_cli_files first), so only the single last file came back.
+  // Any tab opened during the restore is persisted once the restore has merged it in.
   useEffect(() => {
+    if (booting) return;
     const activeId = activeTabIdRef.current;
     const persistable = tabs.filter((t) => t.filePath);
     if (persistable.length === 0) {
@@ -1198,7 +1213,7 @@ function AppContent() {
     }));
     const activeIdx = persistable.findIndex((t) => t.id === activeId);
     setSession({ tabs: sessTabs, activeIndex: activeIdx < 0 ? 0 : activeIdx });
-  }, [tabs, activeTabId]);
+  }, [tabs, activeTabId, booting]);
 
   // Open a file: if it's already in a tab, just switch to it (preserving any
   // unsaved edits there); otherwise load it into a new tab. With tabs there's no
