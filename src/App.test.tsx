@@ -1042,3 +1042,26 @@ describe("App tab click focus", () => {
         expect(tab("a.md").getAttribute("aria-selected")).toBe("true");
     });
 });
+
+describe("App side panel layout", () => {
+    // The panels start right below the title bar, so an open one covered the first tabs:
+    // the content was inset beside it, the tab strip was not. RLL-03.
+    it("insets the tab bar beside an open side panel, as it does the content", async () => {
+        const { container } = boot();
+        await openViaDialog("/notes/a.md", "# A\n");
+        // jsdom drops min() from inline styles, so read the reservation from the root's
+        // variable and check that each region pads by that variable.
+        const root = container.firstElementChild as HTMLElement;
+        const reserved = () => root.style.getPropertyValue("--panel-inset-left");
+        const tabBar = screen.getByRole("tablist").parentElement!;
+        const content = document.querySelector<HTMLElement>("[data-split-left]")!.parentElement!;
+        expect(reserved()).toBe("0px");
+        expect(tabBar.style.paddingLeft).toBe("var(--panel-inset-left)");
+        expect(content.style.paddingLeft).toBe("var(--panel-inset-left)");
+
+        fireEvent.click(screen.getByRole("button", { name: "Open table of contents" }));
+
+        await waitFor(() => expect(reserved()).toBe("min(288px, 90vw)"));
+        expect(screen.getByRole("tablist").parentElement!.style.paddingLeft).toBe("var(--panel-inset-left)");
+    });
+});

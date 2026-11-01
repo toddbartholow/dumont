@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef, useMemo, lazy, Suspense } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo, lazy, Suspense, type CSSProperties } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { recentPathFromMenuId } from "./utils/menuActions";
 import { open, save, ask } from "@tauri-apps/plugin-dialog";
@@ -162,6 +162,14 @@ const AI_PANEL_WIDTH = 400;
 // editor into split mode, and the merge view's diff gutter and the opening words of
 // every changed line end up underneath the panel.
 const LEFT_PANEL_WIDTH = 288;
+
+// The padding that keeps a region clear of the open side panels. The widths are
+// variables set on the app root (panelInsetVars); see there. RLL-03.
+const PANEL_INSET_STYLE: CSSProperties = {
+  paddingLeft: "var(--panel-inset-left)",
+  paddingRight: "var(--panel-inset-right)",
+  transition: "padding-left 0.15s ease, padding-right 0.15s ease",
+};
 
 // What the review banner says when Agent mode is the one proposing the change. A
 // version-history restore drives the same merge view and supplies its own label.
@@ -2103,6 +2111,22 @@ function AppContent() {
     });
   }, []);
 
+  // Space reserved on BOTH sides for whichever panels are open, so what is under them
+  // (the tab bar, the conflict bar, the editor and preview) reflows beside them instead
+  // of being covered. The panels are `fixed` (left-0 / right-0, from just below the
+  // title bar to just above the status bar), which is what keeps the window controls
+  // at the edge, and it is also why they take no layout space of their own and this
+  // padding has to stand in for them. min() mirrors each panel's own max width so a
+  // narrow window reserves only as much as the panel actually takes.
+  //
+  // Set once, as variables on the app root, and read by every inset region through
+  // PANEL_INSET_STYLE, so the regions cannot drift apart. Only the content used to be
+  // inset, and an open panel covered the first tabs. RLL-03.
+  const panelInsetVars = useMemo(() => ({
+    "--panel-inset-left": leftPanel ? `min(${LEFT_PANEL_WIDTH}px, 90vw)` : "0px",
+    "--panel-inset-right": showAIPanel ? `min(${AI_PANEL_WIDTH}px, 90vw)` : "0px",
+  }) as CSSProperties, [leftPanel, showAIPanel]);
+
   // Right-click menu on a tab: {id, x, y} while open. TABS-12.
   const [tabMenu, setTabMenu] = useState<{ id: string; x: number; y: number } | null>(null);
   const handleTabContextMenu = useCallback((id: string, x: number, y: number) => {
@@ -2110,7 +2134,7 @@ function AppContent() {
   }, []);
 
   return (
-    <div className="h-screen flex flex-col bg-[var(--bg-primary)] overflow-hidden transition-colors">
+    <div className="h-screen flex flex-col bg-[var(--bg-primary)] overflow-hidden transition-colors" style={panelInsetVars}>
       <TitleBar
         fileName={fileName ?? undefined}
         isDirty={isDirty}
@@ -2133,25 +2157,35 @@ function AppContent() {
 
       {/* Tab bar — always shown once a file is open (even with one tab), with a
           + button, so it's clear more files can be opened in tabs. TABS-01. */}
+      {/* Both bars sit under the side panels (which start right below the title
+          bar), so they take the same inset as the content. Without it the open
+          panel covered the first tabs, and the start of the conflict bar. The
+          wrapper, not the tab strip, is padded: padding inside the strip's own
+          scroller would let scrollIntoView park the active tab under the panel.
+          RLL-03. */}
       {hasFile && tabBarItems.length >= 1 && (
-        <TabBar
-          tabs={tabBarItems}
-          activeId={activeTabId}
-          onSelect={activateTab}
-          onClose={closeTab}
-          onNewTab={handleNewFile}
-          onReorder={handleReorderTab}
-          onContextMenu={handleTabContextMenu}
-          onPointerActivate={focusDocument}
-        />
+        <div className="shrink-0 bg-[var(--bg-titlebar)]" style={PANEL_INSET_STYLE}>
+          <TabBar
+            tabs={tabBarItems}
+            activeId={activeTabId}
+            onSelect={activateTab}
+            onClose={closeTab}
+            onNewTab={handleNewFile}
+            onReorder={handleReorderTab}
+            onContextMenu={handleTabContextMenu}
+            onPointerActivate={focusDocument}
+          />
+        </div>
       )}
       {hasFile && activeTabId !== null && conflictedTabs.has(activeTabId) && (
-        <ConflictBar
-          fileName={fileName ?? "This file"}
-          onReload={handleConflictReload}
-          onKeepMine={handleConflictKeepMine}
-          focusSignal={conflictFocus}
-        />
+        <div className="shrink-0" style={PANEL_INSET_STYLE}>
+          <ConflictBar
+            fileName={fileName ?? "This file"}
+            onReload={handleConflictReload}
+            onKeepMine={handleConflictKeepMine}
+            focusSignal={conflictFocus}
+          />
+        </div>
       )}
 
       {/* Startup update check; invisible unless an update is actually available. */}
@@ -2188,18 +2222,7 @@ function AppContent() {
           <div
             ref={splitContainerRef}
             className="flex-1 overflow-hidden flex flex-row"
-            // Reserve space on BOTH sides for whichever panels are open, so the
-            // editor and preview reflow beside them instead of being covered. The
-            // panels are `fixed` (left-0 / right-0, above the status bar), which is
-            // what keeps the window controls at the edge, and it is also why they
-            // take no layout space of their own and this padding has to stand in for
-            // them. min() mirrors each panel's own max width so a narrow window
-            // reserves only as much as the panel actually takes.
-            style={{
-              paddingLeft: leftPanel ? `min(${LEFT_PANEL_WIDTH}px, 90vw)` : 0,
-              paddingRight: showAIPanel ? `min(${AI_PANEL_WIDTH}px, 90vw)` : 0,
-              transition: "padding-left 0.15s ease, padding-right 0.15s ease",
-            }}
+            style={PANEL_INSET_STYLE}
           >
             <div
               data-split-left
