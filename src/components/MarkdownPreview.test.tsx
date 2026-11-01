@@ -243,3 +243,13 @@ describe("heading ids", () => {
         expect(extractHeadings(md).map((h) => h.id)).toEqual(ids);
     });
 });
+
+describe("wikilinks", () => {
+    it("renders [[links]] in prose but leaves code untouched", async () => {
+        const { container } = renderPreview("See [[Note]].\n\n```js\nconst x = [[1, 2]];\n```\n\nand `[[inline]]`");
+        await waitFor(() => expect(container.querySelector("a[title='Wikilink: Note']")).toBeTruthy());
+        expect(container.querySelector("pre")!.textContent).toContain("const x = [[1, 2]];");
+        expect(container.querySelector("p:last-of-type code")!.textContent).toBe("[[inline]]");
+        expect(container.querySelectorAll("a[title^='Wikilink']").length).toBe(1);
+    });
+});

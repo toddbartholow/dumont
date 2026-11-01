@@ -17,6 +17,7 @@ import type { Scroller } from "../utils/scrollSync";
 import { MermaidBlock } from "./MermaidBlock";
 import { isMermaidLanguage } from "../utils/mermaidLanguage";
 import { slugify, createSlugger } from "../utils/slugify";
+import { rewriteWikilinksOutsideCode } from "../utils/wikilinkRewrite";
 
 // Detect KaTeX-style math so we only load the heavy katex bundle when needed.
 // $$...$$ for block math, $...$ for inline math (not preceded/followed by digit
@@ -863,13 +864,8 @@ function MarkdownPreviewImpl({
     // We use a custom href scheme so the link click handler can detect them
     // and load the target file, while keeping the source markdown portable
     // (the source still has [[Foo]] — only the rendered output uses the scheme).
-    const renderBody = useMemo(() => {
-        return parsedBody.replace(/\[\[([^\]|]+?)(?:\|([^\]]+))?\]\]/g, (_m, target: string, alias?: string) => {
-            const t = target.trim();
-            const a = (alias ?? target).trim();
-            return `[${a}](wikilink:${encodeURIComponent(t)})`;
-        });
-    }, [parsedBody]);
+    // Code and math are skipped, so `[[1, 2]]` in a code block stays code.
+    const renderBody = useMemo(() => rewriteWikilinksOutsideCode(parsedBody), [parsedBody]);
 
     // Lazy-load KaTeX only when the document actually contains math.
     // Heavy (~280kb) — keeping it out of the initial bundle is a real win.
