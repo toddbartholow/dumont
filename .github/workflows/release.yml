@@ -39,6 +39,8 @@ jobs:
 
       - name: Check for changes and bump version
         id: bump
+        env:
+          SKIP_BUMP: ${{ inputs.skip_bump }}
         run: |
           # Cargo.lock records the crate's own version too, and nothing else in
           # this job rewrites it, so every release left it one version behind
@@ -56,7 +58,7 @@ jobs:
           CURRENT_VERSION=$(jq -r '.version' src-tauri/tauri.conf.json)
           echo "Current version: $CURRENT_VERSION"
 
-          if [ "${{ inputs.skip_bump }}" = "true" ]; then
+          if [ "$SKIP_BUMP" = "true" ]; then
             # Skip-bump path: release the version exactly as committed. For a
             # version set by hand (a major or minor bump), where the automatic
             # patch bump below would overshoot it.
@@ -148,8 +150,12 @@ jobs:
       # the generic blurb if the section comes out empty.
       - name: Extract release notes from CHANGELOG
         id: notes
+        # Step outputs go in through env, never ${{ }} inside the script: an
+        # expression is pasted into the shell source before it runs, so a value
+        # with a quote or a $( ) in it would execute as code.
+        env:
+          VERSION: ${{ steps.bump.outputs.version }}
         run: |
-          VERSION="${{ steps.bump.outputs.version }}"
           # Print only THIS version's section — the lines between its
           # "## [VERSION]" heading and the next "## [" heading — so the release
           # notes are scoped to just this release, not the whole history.
@@ -241,7 +247,7 @@ jobs:
       - name: Setup Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
-          bun-version: latest
+          bun-version: 1.4.2
 
       - name: Install frontend dependencies
         run: bun install --frozen-lockfile
