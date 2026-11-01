@@ -76,6 +76,11 @@ const invoke = vi.fn(async (cmd: string, args?: Record<string, unknown>) => {
         // The file explorer reads this when it opens, and a null crashes it.
         case "list_directory_files":
             return [];
+        // One old version of every file, for the history panel's restore-as-review flow.
+        case "list_snapshots":
+            return [{ id: "snap-1", timestamp: Date.now() - 60_000, bytes: 9 }];
+        case "read_snapshot":
+            return "# Older\n";
         default:
             return null;
     }
@@ -969,5 +974,32 @@ describe("App new file", () => {
         await press({ key: "n", ctrlKey: true });
 
         expect(tabNames()).toEqual(["Untitled-1.md"]);
+    });
+});
+
+describe("App pending review", () => {
+    const bootWithHistory = () =>
+        render(
+            <TestProviders settings={{ "files.history": true }}>
+                <App />
+            </TestProviders>,
+        );
+
+    // loadFileDirect never dropped the proposal, so the previous file's review stayed up
+    // over the newly opened one, where accepting it would write the old text in.
+    it("is dropped when a different file opens", async () => {
+        bootWithHistory();
+        await openViaDialog("/notes/a.md", "# A\n");
+        fireEvent.click(screen.getByRole("button", { name: "Open version history" }));
+        const latest = await screen.findByText("Latest");
+        await act(async () => {
+            fireEvent.click(latest.closest("button")!);
+        });
+        await screen.findByText(/^Snapshot from/);
+
+        await openViaDialog("/notes/b.md", "# B\n");
+
+        await waitFor(() => expect(screen.getByRole("tab", { selected: true }).getAttribute("title")).toBe("b.md"));
+        expect(screen.queryByText(/^Snapshot from/)).toBeNull();
     });
 });

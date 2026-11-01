@@ -579,6 +579,11 @@ function AppContent() {
     try {
       const fileData = await invoke<FileData>("read_file", { path });
       if (stillWanted && !stillWanted()) return false;
+      // A pending AI or history review is a diff over the buffer it was made from, and
+      // that buffer is about to be replaced. applyTabToLive and handleNewFile already
+      // dropped it; this path did not, so opening a file left the previous file's
+      // proposal up over the new one, where accepting it wrote the old text in.
+      setProposedDoc(null);
       bumpDocSwap(); // new document → editor resets undo history. TABS-03.
       setFilePath(fileData.path);
       setFileName(fileData.name);
