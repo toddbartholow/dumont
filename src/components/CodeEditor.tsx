@@ -186,19 +186,65 @@ function toEdState(view: EditorView): EditorState {
  *  (keeps undo granular and avoids full-doc churn). Selection is set atomically,
  *  so there's no one-frame caret flicker (fixes the old rAF restore). */
 function applyResultToView(view: EditorView, r: EditorResult) {
-    const old = view.state.doc.toString();
-    const next = r.text;
+    view.dispatch({
+        changes: minimalChange(view.state.doc.toString(), r.text),
+        selection: { anchor: r.selStart, head: r.selEnd },
+        scrollIntoView: true,
+    });
+}
+
+/** The single change that turns `old` into `next`: everything between their
+ *  common prefix and common suffix. */
+function minimalChange(old: string, next: string): { from: number; to: number; insert: string } {
     let p = 0;
     const maxP = Math.min(old.length, next.length);
     while (p < maxP && old.charCodeAt(p) === next.charCodeAt(p)) p++;
     let s = 0;
     const maxS = Math.min(old.length - p, next.length - p);
     while (s < maxS && old.charCodeAt(old.length - 1 - s) === next.charCodeAt(next.length - 1 - s)) s++;
-    view.dispatch({
-        changes: { from: p, to: old.length - s, insert: next.slice(p, next.length - s) },
-        selection: { anchor: r.selStart, head: r.selEnd },
-        scrollIntoView: true,
+    return { from: p, to: old.length - s, insert: next.slice(p, next.length - s) };
+}
+
+/**
+ * A stretch of the document that something asynchronous will write to later: an
+ * HTML or image paste waiting on a conversion or a disk write, or the AI bubble
+ * waiting on a model. Offsets read before an await are stale after it, so the
+ * editor maps every tracked range through each edit as it happens, and marks it
+ * dead when the document is swapped for another or replaced wholesale.
+ */
+interface TrackedRange {
+    from: number;
+    to: number;
+    /** The text the range covered when it was captured. */
+    text: string;
+    /** The docSwapId it was captured under; a different one means another document. */
+    swap: number | undefined;
+    alive: boolean;
+}
+
+/** Map tracked ranges through one update's changes. A range that covers text
+ *  shrinks rather than grows, so typing right at either edge is never swept into
+ *  it; a collapsed range (a caret) stays before text typed at that spot, which
+ *  keeps a paste ahead of the keystrokes that followed it. A change that
+ *  replaced the whole document (a review starting, select-all and type) leaves
+ *  nothing to map onto, so it kills them. */
+function mapTrackedRanges(ranges: Iterable<TrackedRange>, update: ViewUpdate) {
+    const oldLength = update.startState.doc.length;
+    let replacedWholesale = false;
+    update.changes.iterChangedRanges((fromA, toA) => {
+        if (oldLength > 0 && fromA === 0 && toA === oldLength) replacedWholesale = true;
     });
+    for (const r of ranges) {
+        if (replacedWholesale) {
+            r.alive = false;
+        } else if (r.from === r.to) {
+            r.from = r.to = update.changes.mapPos(r.from, -1);
+        } else {
+            const from = update.changes.mapPos(r.from, 1);
+            r.to = Math.max(from, update.changes.mapPos(r.to, -1));
+            r.from = from;
+        }
+    }
 }
 
 function CodeEditorImpl({
@@ -314,7 +360,10 @@ function CodeEditorImpl({
     const [findFocusSignal, setFindFocusSignal] = useState(0);
     const [slashState, setSlashState] = useState<{ from: number; pos: { x: number; y: number } } | null>(null);
     const [slashQuery, setSlashQuery] = useState("");
-    const [aiBubble, setAIBubble] = useState<{ x: number; y: number; selStart: number; selEnd: number; text: string } | null>(null);
+    // Where the bubble sits and what it was opened on. The range it will write to
+    // is NOT here: it lives in aiRangeRef, mapped through every edit made while
+    // the model works.
+    const [aiBubble, setAIBubble] = useState<{ x: number; y: number; text: string } | null>(null);
     const [reviewActive, setReviewActive] = useState(false);
     // Floating table toolbar: set when the caret is inside a markdown table.
     const [tableUI, setTableUI] = useState<{ x: number; y: number; align: Align } | null>(null);
@@ -332,7 +381,12 @@ function CodeEditorImpl({
     const onImagePasteRef = useRef(onImagePaste); onImagePasteRef.current = onImagePaste;
     const onErrorRef = useRef(onError); onErrorRef.current = onError;
     const onNoticeRef = useRef(onNotice); onNoticeRef.current = onNotice;
+    const onReviewResolveRef = useRef(onReviewResolve); onReviewResolveRef.current = onReviewResolve;
     const onFindOpenChangeRef = useRef(onFindOpenChange); onFindOpenChangeRef.current = onFindOpenChange;
+    // Read at RENDER time on purpose, not synced in an effect: a paste or AI result
+    // landing between the commit of a tab switch and its effects must already see
+    // the new id, or it would write into the outgoing document's text.
+    const docSwapIdRef = useRef(docSwapId); docSwapIdRef.current = docSwapId;
     const filePathRef = useRef(filePath); filePathRef.current = filePath;
     // Base names (without .md) of the sibling files, for `[[` autocomplete. Kept
     // in a ref so the once-created completion source always sees the latest list.
@@ -340,6 +394,17 @@ function CodeEditorImpl({
     const aiConfigRef = useRef(aiConfig); aiConfigRef.current = aiConfig;
     const typewriterRef = useRef(typewriterMode); typewriterRef.current = typewriterMode;
     const slashStateRef = useRef(slashState); slashStateRef.current = slashState;
+
+    // Ranges an async paste or the AI bubble will write to; see TrackedRange.
+    const trackedRangesRef = useRef(new Set<TrackedRange>());
+    // The AI bubble's target range, or null when no bubble is open.
+    const aiRangeRef = useRef<TrackedRange | null>(null);
+    const trackRange = useCallback((view: EditorView, from: number, to: number): TrackedRange => {
+        const r: TrackedRange = { from, to, text: view.state.doc.sliceString(from, to), swap: docSwapIdRef.current, alive: true };
+        trackedRangesRef.current.add(r);
+        return r;
+    }, []);
+    const isLive = useCallback((r: TrackedRange) => r.alive && r.swap === docSwapIdRef.current, []);
 
     // The last value WE emitted via onChange — lets the external-content sync
     // effect below skip the O(n) doc.toString() comparison on the common case
@@ -361,6 +426,11 @@ function CodeEditorImpl({
     const reviewingRef = useRef(false);
     const reviewOriginalRef = useRef("");
     const lastReviewRef = useRef<string | null>(null);
+    // Whether the current review has ever had a chunk. Resolving the last one
+    // individually ends the review, but a review that STARTED with none (a
+    // proposal identical to the document) must not end the instant it opens,
+    // and the merge field can report zero for a moment before it computes them.
+    const reviewHadChunksRef = useRef(false);
 
     // `[[` autocomplete: when the caret is inside an open wikilink target, offer
     // the folder's other markdown files. Reads wikiNamesRef (refreshed below) so
@@ -428,7 +498,15 @@ function CodeEditorImpl({
         const rect = view.scrollDOM.getBoundingClientRect();
         const x = coords ? coords.left : rect.left + 28;
         const y = (coords ? coords.bottom : rect.top + 24) + 6;
-        setAIBubble({ x, y, selStart: sel.from, selEnd: sel.to, text: view.state.doc.sliceString(sel.from, sel.to) });
+        if (aiRangeRef.current) trackedRangesRef.current.delete(aiRangeRef.current);
+        aiRangeRef.current = trackRange(view, sel.from, sel.to);
+        setAIBubble({ x, y, text: aiRangeRef.current.text });
+    }, [trackRange]);
+
+    const closeAIBubble = useCallback(() => {
+        if (aiRangeRef.current) trackedRangesRef.current.delete(aiRangeRef.current);
+        aiRangeRef.current = null;
+        setAIBubble(null);
     }, []);
 
     // === One-time CodeMirror setup ===
@@ -480,6 +558,9 @@ function CodeEditorImpl({
         ]));
 
         const updateListener = EditorView.updateListener.of((update: ViewUpdate) => {
+            if (update.docChanged && trackedRangesRef.current.size > 0) {
+                mapTrackedRanges(trackedRangesRef.current, update);
+            }
             if (reviewingRef.current) {
                 // During an AI review the editor shows the full PROPOSED text, but
                 // the preview should show "original + the changes accepted so far".
@@ -492,6 +573,26 @@ function CodeEditorImpl({
                 if (accepted !== null && accepted !== lastEmittedRef.current) {
                     lastEmittedRef.current = accepted;
                     onChangeRef.current?.(accepted);
+                }
+                // Resolving every chunk one at a time ends the review the same way
+                // Accept all / Reject all do. Checked on EVERY update, not just
+                // doc-changing ones: accepting a chunk folds it into the original
+                // side and leaves the editor doc untouched, so a docChanged gate
+                // would never see a review finished by accepting.
+                let chunkCount = -1;
+                try { chunkCount = getChunks(update.state)?.chunks.length ?? -1; } catch { /* merge field not ready */ }
+                if (chunkCount > 0) reviewHadChunksRef.current = true;
+                if (reviewHadChunksRef.current && chunkCount === 0) {
+                    // Deferred: dispatching from inside an update listener is
+                    // re-entrant. Re-check then, in case Accept all / Reject all or a
+                    // new proposal got there first.
+                    requestAnimationFrame(() => {
+                        const v = viewRef.current;
+                        if (!v || !reviewingRef.current) return;
+                        let stillZero = false;
+                        try { stillZero = (getChunks(v.state)?.chunks.length ?? -1) === 0; } catch { /* merge view gone */ }
+                        if (stillZero) finishReview(v.state.doc.toString());
+                    });
                 }
             } else if (update.docChanged) {
                 const value = update.state.doc.toString();
@@ -632,19 +733,50 @@ function CodeEditorImpl({
         setTableUI({ x: coords.left, y: coords.top, align: region.model.aligns[colIndex] ?? "none" });
     }
 
+    /**
+     * Write `insert` where a paste was aimed before it went async. Returns false,
+     * writing nothing, when the document it was aimed at is gone (a tab switch or
+     * a wholesale replacement in the meantime).
+     *
+     * The range has been mapped through every edit since it was captured. If the
+     * text it covered is still intact the paste replaces it, as it would have done
+     * synchronously; if the user edited inside it meanwhile, the paste is inserted
+     * at its end instead, so nothing they typed is deleted. The caret follows the
+     * paste only if it is still where the paste was aimed: someone who has clicked
+     * elsewhere and kept typing is not yanked back.
+     */
+    function writeAtTrackedRange(view: EditorView, r: TrackedRange, insert: string): boolean {
+        trackedRangesRef.current.delete(r);
+        if (!isLive(r)) return false;
+        const intact = view.state.doc.sliceString(r.from, r.to) === r.text;
+        const from = intact ? r.from : r.to;
+        const sel = view.state.selection.main;
+        const caretHere = sel.from === r.from && sel.to === r.to;
+        view.dispatch({
+            changes: { from, to: r.to, insert },
+            ...(caretHere ? { selection: { anchor: from + insert.length } } : {}),
+        });
+        return true;
+    }
+
     function handlePaste(event: ClipboardEvent, view: EditorView): boolean {
         const imageFile = getImageFromClipboard(event);
         if (imageFile) {
             event.preventDefault();
             if (!filePathRef.current) { onErrorRef.current?.("Please save your file first before pasting images."); return true; }
+            // Captured BEFORE the await. Reading the selection after the image was
+            // written to disk put it wherever the caret had wandered meanwhile, or
+            // into a different document entirely after a tab switch.
+            const sel = view.state.selection.main;
+            const target = trackRange(view, sel.from, sel.to);
             (async () => {
                 try {
                     const imagePath = await saveImageToFile(imageFile, filePathRef.current!);
                     const md = createMarkdownImage(imagePath, `image-${Date.now()}`);
-                    const sel = view.state.selection.main;
-                    view.dispatch({ changes: { from: sel.from, to: sel.to, insert: md }, selection: { anchor: sel.from + md.length } });
-                    onImagePasteRef.current?.();
+                    if (writeAtTrackedRange(view, target, md)) onImagePasteRef.current?.();
+                    else onNoticeRef.current?.(`The image was saved to ${imagePath}, but the document changed before it could be inserted.`);
                 } catch (error) {
+                    trackedRangesRef.current.delete(target);
                     const msg = typeof error === "string" ? error : (error as { message?: string })?.message;
                     onErrorRef.current?.(msg || "Failed to save image. Please try again.");
                 }
@@ -667,11 +799,15 @@ function CodeEditorImpl({
         }
         if (html && /<\w+/.test(html)) {
             event.preventDefault();
+            // Captured before the await, for the same reason as the image path:
+            // htmlToMarkdown lazy-loads turndown on first use, and a keystroke or a
+            // tab switch in that window used to redirect the paste.
+            const sel = view.state.selection.main;
+            const target = trackRange(view, sel.from, sel.to);
             (async () => {
                 let insert = text;
                 try { const md = (await htmlToMarkdown(html)).trim(); if (md) insert = md; } catch {/* fall back to plain text */ }
-                const sel = view.state.selection.main;
-                view.dispatch({ changes: { from: sel.from, to: sel.to, insert }, selection: { anchor: sel.from + insert.length } });
+                writeAtTrackedRange(view, target, insert);
             })();
             return true;
         }
@@ -684,9 +820,11 @@ function CodeEditorImpl({
         if (content === lastEmittedRef.current) return;
         const view = viewRef.current;
         if (!view) return;
-        if (content !== view.state.doc.toString()) {
-            view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: content } });
-        }
+        const old = view.state.doc.toString();
+        // As a minimal change, not a wholesale replacement, so the caret and any
+        // pending paste or AI range map through an outside edit (a checkbox ticked
+        // in the preview, a frontmatter edit) instead of being thrown away.
+        if (content !== old) view.dispatch({ changes: minimalChange(old, content) });
         lastEmittedRef.current = content;
     }, [content]);
 
@@ -711,6 +849,13 @@ function CodeEditorImpl({
         // documented way to clear CodeMirror's undo/redo stacks.
         view.dispatch({ effects: historyCompRef.current.reconfigure([]) });
         view.dispatch({ effects: historyCompRef.current.reconfigure(history()) });
+        // Anything aimed at the previous document is meaningless now. An open AI
+        // bubble would write its result into THIS file at the old file's offsets,
+        // so it closes, and a pending paste is dropped.
+        for (const r of trackedRangesRef.current) r.alive = false;
+        trackedRangesRef.current.clear();
+        aiRangeRef.current = null;
+        setAIBubble(null);
     }, [docSwapId]);
 
     // Reconfigure word-wrap / spellcheck when their props change.
@@ -729,7 +874,11 @@ function CodeEditorImpl({
         if (!view) return;
         if (reviewDoc != null) {
             if (reviewingRef.current && reviewDoc === lastReviewRef.current) return;
-            if (!reviewingRef.current) reviewOriginalRef.current = view.state.doc.toString();
+            if (!reviewingRef.current) {
+                reviewOriginalRef.current = view.state.doc.toString();
+                // Only for a FRESH review: a refreshed proposal mid-review keeps it.
+                reviewHadChunksRef.current = false;
+            }
             reviewingRef.current = true;
             lastReviewRef.current = reviewDoc;
             setReviewActive(true);
@@ -756,17 +905,25 @@ function CodeEditorImpl({
         }
     }, [reviewDoc]);
 
+    // Tear down the merge view and resolve the review with `final`. Shared by
+    // Accept all and by the update listener, which calls it once the last chunk
+    // has been accepted or rejected on its own; by then the editor doc already IS
+    // the result. Stable (refs only), so the once-created listener can hold it.
+    const finishReview = useCallback((final: string) => {
+        reviewingRef.current = false;
+        lastReviewRef.current = null;
+        reviewHadChunksRef.current = false;
+        setReviewActive(false);
+        viewRef.current?.dispatch({ effects: mergeCompRef.current.reconfigure([]) });
+        lastEmittedRef.current = final; // keep the App content-sync from re-dispatching
+        onReviewResolveRef.current?.(final);
+    }, []);
+
     const acceptAllChanges = useCallback(() => {
         const view = viewRef.current;
         if (!view) return;
-        const final = view.state.doc.toString();
-        reviewingRef.current = false;
-        lastReviewRef.current = null;
-        setReviewActive(false);
-        view.dispatch({ effects: mergeCompRef.current.reconfigure([]) });
-        lastEmittedRef.current = final; // keep the App content-sync from re-dispatching
-        onReviewResolve?.(final);
-    }, [onReviewResolve]);
+        finishReview(view.state.doc.toString());
+    }, [finishReview]);
 
     const rejectAllChanges = useCallback(() => {
         const view = viewRef.current;
@@ -774,6 +931,7 @@ function CodeEditorImpl({
         const orig = reviewOriginalRef.current;
         reviewingRef.current = false;
         lastReviewRef.current = null;
+        reviewHadChunksRef.current = false;
         setReviewActive(false);
         view.dispatch({
             changes: { from: 0, to: view.state.doc.length, insert: orig },
@@ -783,8 +941,8 @@ function CodeEditorImpl({
         // Pass the original explicitly (not null): the preview was live-tracking the
         // accepted-so-far document during review, so we must reset it all the way
         // back, not leave it on a partially-accepted state.
-        onReviewResolve?.(orig);
-    }, [onReviewResolve]);
+        onReviewResolveRef.current?.(orig);
+    }, []);
 
     // Scroll-fraction sync (rAF-throttled — PREVIEW-04) + imperative scroller.
     const scrollRafRef = useRef(0);
@@ -996,6 +1154,44 @@ function CodeEditorImpl({
         applyResultToView(v, { text: newContent, selStart: newCursor, selEnd: newCursor });
     }, []);
 
+    // The AI bubble's Replace and Insert write to aiRangeRef, which has been
+    // mapped through every edit made while the model was working. They used to
+    // write at the offsets captured when the bubble opened, so typing above the
+    // selection meanwhile made Replace overwrite the wrong text.
+    const handleAIReplace = useCallback((out: string) => {
+        const v = viewRef.current;
+        const r = aiRangeRef.current;
+        if (!v || !r || !isLive(r)) {
+            onNoticeRef.current?.("The document changed while AI was working, so its suggestion was not applied.");
+            closeAIBubble();
+            return;
+        }
+        // Mapping keeps the range on the same text through edits AROUND it, but an
+        // edit INSIDE it means Replace would discard words the user just typed.
+        // Leave the bubble open: Insert still works, and nothing is lost.
+        if (v.state.doc.sliceString(r.from, r.to) !== r.text) {
+            onNoticeRef.current?.("The selected text was edited while AI was working, so Replace was skipped. Insert still works.");
+            return;
+        }
+        v.dispatch({ changes: { from: r.from, to: r.to, insert: out }, selection: { anchor: r.from + out.length } });
+        closeAIBubble();
+        v.focus();
+    }, [isLive, closeAIBubble]);
+
+    const handleAIInsert = useCallback((out: string) => {
+        const v = viewRef.current;
+        const r = aiRangeRef.current;
+        if (!v || !r || !isLive(r)) {
+            onNoticeRef.current?.("The document changed while AI was working, so its suggestion was not applied.");
+            closeAIBubble();
+            return;
+        }
+        const ins = "\n\n" + out;
+        v.dispatch({ changes: { from: r.to, to: r.to, insert: ins }, selection: { anchor: r.to + ins.length } });
+        closeAIBubble();
+        v.focus();
+    }, [isLive, closeAIBubble]);
+
     const handleSlashSelect = useCallback((cmd: SlashCommand) => {
         const v = viewRef.current;
         const cur = slashStateRef.current;
@@ -1063,20 +1259,9 @@ function CodeEditorImpl({
                         anchor={{ x: aiBubble.x, y: aiBubble.y }}
                         selectedText={aiBubble.text}
                         config={aiConfig}
-                        onReplace={(out) => {
-                            const v = viewRef.current;
-                            if (v) v.dispatch({ changes: { from: aiBubble.selStart, to: aiBubble.selEnd, insert: out }, selection: { anchor: aiBubble.selStart + out.length } });
-                            setAIBubble(null);
-                            v?.focus();
-                        }}
-                        onInsert={(out) => {
-                            const v = viewRef.current;
-                            const ins = "\n\n" + out;
-                            if (v) v.dispatch({ changes: { from: aiBubble.selEnd, to: aiBubble.selEnd, insert: ins }, selection: { anchor: aiBubble.selEnd + ins.length } });
-                            setAIBubble(null);
-                            v?.focus();
-                        }}
-                        onClose={() => setAIBubble(null)}
+                        onReplace={handleAIReplace}
+                        onInsert={handleAIInsert}
+                        onClose={closeAIBubble}
                     />
                 )}
 

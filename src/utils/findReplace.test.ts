@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { findAll, findSpans, matchLength, expandReplacement, replaceOne, replaceAllMatches, isValidPattern } from "./findReplace";
+import { findAll, findSpans, matchLength, expandReplacement, replaceOne, replaceNext, replaceAllMatches, isValidPattern } from "./findReplace";
 
 describe("findSpans", () => {
     it("returns start and end for plain and regex matches", () => {
@@ -144,37 +144,100 @@ describe("replaceOne", () => {
 
 describe("replaceAllMatches", () => {
     it("replaces every plain match, keeping the caret near the first one", () => {
-        const matches = findAll("the cat sat", "at", false, false); // [5, 9]
-        expect(replaceAllMatches("the cat sat", matches, "at", "X", false, false)).toEqual({
+        expect(replaceAllMatches("the cat sat", "at", "X", false, false)).toEqual({
             content: "the cX sX",
             cursor: 6,
         });
     });
 
     it("handles a multi-character replacement that shifts later indices", () => {
-        const matches = findAll("a a a", "a", false, false); // [0, 2, 4]
-        expect(replaceAllMatches("a a a", matches, "a", "bb", false, false)).toEqual({
+        expect(replaceAllMatches("a a a", "a", "bb", false, false)).toEqual({
             content: "bb bb bb",
             cursor: 2,
         });
     });
 
     it("uses native regex replacement with backreferences", () => {
-        const matches = findAll("a1 b2", "([a-z])(\\d)", false, true); // [0, 3]
         // Cursor uses the replacement template length ("$2$1" → 4), matching the
         // existing behavior: min(matches[0] + 4, content length).
-        expect(replaceAllMatches("a1 b2", matches, "([a-z])(\\d)", "$2$1", false, true)).toEqual({
+        expect(replaceAllMatches("a1 b2", "([a-z])(\\d)", "$2$1", false, true)).toEqual({
             content: "1a 2b",
             cursor: 4,
         });
     });
 
     it("returns null when there are no matches", () => {
-        expect(replaceAllMatches("abc", [], "x", "y", false, false)).toBeNull();
+        expect(replaceAllMatches("abc", "x", "y", false, false)).toBeNull();
     });
 
     it("returns null for an invalid regex", () => {
-        expect(replaceAllMatches("abc", [0], "(", "y", false, true)).toBeNull();
+        expect(replaceAllMatches("abc", "(", "y", false, true)).toBeNull();
+    });
+
+    it("finds its own matches, so text that moved since the last search is replaced intact", () => {
+        // The find bar's match list was [0, 4] for "foo foo"; the user then typed
+        // "XY" at the front. Splicing at the old offsets would cut "XYf" and "o f".
+        expect(replaceAllMatches("XYfoo foo", "foo", "bar", false, false)).toEqual({
+            content: "XYbar bar",
+            cursor: 5,
+        });
+    });
+
+    it("respects match case when it finds the matches", () => {
+        expect(replaceAllMatches("Foo foo", "foo", "x", true, false)?.content).toBe("Foo x");
+    });
+});
+
+describe("replaceOne verifies the match is really there", () => {
+    it("returns null when a plain needle is no longer at the offset", () => {
+        // Used to splice three characters out of "x foo" at 0 and give "xoo".
+        expect(replaceOne("x foo", 0, "foo", "x", false, false)).toBeNull();
+    });
+
+    it("honors match case in plain mode", () => {
+        expect(replaceOne("Foo", 0, "foo", "x", true, false)).toBeNull();
+        expect(replaceOne("Foo", 0, "foo", "x", false, false)).toEqual({ content: "x", cursor: 1 });
+    });
+});
+
+describe("replaceNext (recomputes against the current text)", () => {
+    // The double-press case: the first Replace turned "foo foo foo" into
+    // "x foo foo", but the bar's debounced match list still says [0, 4, 8] with
+    // the first one active. The second press passes that stale 0.
+    it("replaces the next real match when a plain offset has gone stale", () => {
+        const once = replaceNext("foo foo foo", 0, "foo", "x", false, false)!;
+        expect(once).toEqual({ content: "x foo foo", cursor: 1 });
+        const twice = replaceNext(once.content, 0, "foo", "x", false, false)!;
+        expect(twice).toEqual({ content: "x x foo", cursor: 3 });
+    });
+
+    it("does the same in match-case mode, skipping a match of the wrong case", () => {
+        const once = replaceNext("foo Foo foo", 0, "foo", "x", true, false)!;
+        expect(once.content).toBe("x Foo foo");
+        expect(replaceNext(once.content, 0, "foo", "x", true, false)!.content).toBe("x Foo x");
+    });
+
+    it("does the same in regex mode, with backreferences", () => {
+        const once = replaceNext("a1 b2 c3", 0, "([a-z])(\\d)", "$2$1", false, true)!;
+        expect(once.content).toBe("1a b2 c3");
+        // Stale 0 now points at "1a", which the pattern does not match.
+        expect(replaceNext(once.content, 0, "([a-z])(\\d)", "$2$1", false, true)!.content).toBe("1a 2b c3");
+    });
+
+    it("replaces the match at the offset when it is still there", () => {
+        expect(replaceNext("foo foo", 4, "foo", "x", false, false)).toEqual({ content: "foo x", cursor: 5 });
+    });
+
+    it("follows a match that moved because text was typed before it", () => {
+        expect(replaceNext("XYfoo bar", 0, "foo", "x", false, false)!.content).toBe("XYx bar");
+    });
+
+    it("wraps to the first match when none is left after the offset", () => {
+        expect(replaceNext("foo bar", 5, "foo", "x", false, false)!.content).toBe("x bar");
+    });
+
+    it("returns null when nothing matches any more", () => {
+        expect(replaceNext("bar", 0, "foo", "x", false, false)).toBeNull();
     });
 });
 

@@ -133,10 +133,15 @@ export function expandReplacement(m: RegExpExecArray, template: string): string 
 }
 
 /**
- * Replace the single match starting at `start`. In regex mode the pattern must
- * actually match at `start` (and supports `$n`/`$&`/`$$` in the replacement).
- * Returns `null` when there's nothing valid to replace (no match at `start`, a
- * zero-length match, or an invalid regex) so the caller can no-op cleanly.
+ * Replace the single match starting at `start`. The match must actually be
+ * there in `content`: regex mode re-runs the pattern anchored at `start` (and
+ * supports `$n`/`$&`/`$$` in the replacement), and plain mode checks that the
+ * needle is present at that offset. Returns `null` when there's nothing valid
+ * to replace (no match at `start`, a zero-length match, or an invalid regex) so
+ * the caller can no-op cleanly.
+ *
+ * Plain mode used to splice `query.length` characters at `start` without
+ * looking, so a stale offset cut a piece out of whatever text had moved there.
  */
 export function replaceOne(
     content: string,
@@ -161,7 +166,7 @@ export function replaceOne(
             return null;
         }
     } else {
-        len = query.length;
+        len = matchLength(content, start, query, caseSensitive, false);
     }
 
     if (len === 0) return null;
@@ -170,21 +175,49 @@ export function replaceOne(
 }
 
 /**
- * Replace every match in `content`. Regex mode defers to the native
- * `String.replace` (one pass, correct `$n` expansion and zero-width handling);
- * plain mode splices the precomputed `matches` in reverse so earlier indices
- * stay valid. The caret is kept near the first replacement rather than jumped
- * to the end of the document. Returns `null` when there's nothing to do or the
- * regex is invalid.
+ * Replace the match the user is on, searching `content` as it is NOW rather
+ * than trusting an offset computed earlier. `from` is where the find bar thinks
+ * the active match starts: if a match still starts there it is the one
+ * replaced, otherwise the first match after `from` is (wrapping to the first
+ * match in the document). Returns `null` when nothing in `content` matches.
+ *
+ * The find bar refreshes its match list on a 100 ms debounce, so a second
+ * Replace pressed inside that window used to splice at the first press's
+ * offsets, which by then pointed into the replacement text. Here the offset is
+ * a hint, never a promise.
  */
-export function replaceAllMatches(
+export function replaceNext(
     content: string,
-    matches: number[],
+    from: number,
     query: string,
     replacement: string,
     caseSensitive: boolean,
     regex: boolean
 ): ReplaceResult | null {
+    const starts = findSpans(content, query, caseSensitive, regex).map(([s]) => s);
+    if (starts.length === 0) return null;
+    const target = starts.find((s) => s >= from) ?? starts[0];
+    return replaceOne(content, target, query, replacement, caseSensitive, regex);
+}
+
+/**
+ * Replace every match in `content`. Regex mode defers to the native
+ * `String.replace` (one pass, correct `$n` expansion and zero-width handling);
+ * plain mode finds the matches in `content` itself and splices them in reverse
+ * so earlier indices stay valid. It takes no precomputed match list on purpose:
+ * the find bar's list lags the text by a debounce, and splicing at stale
+ * offsets corrupted the document. The caret is kept near the first replacement
+ * rather than jumped to the end of the document. Returns `null` when there's
+ * nothing to do or the regex is invalid.
+ */
+export function replaceAllMatches(
+    content: string,
+    query: string,
+    replacement: string,
+    caseSensitive: boolean,
+    regex: boolean
+): ReplaceResult | null {
+    const matches = findAll(content, query, caseSensitive, regex);
     if (matches.length === 0) return null;
 
     let updated: string;

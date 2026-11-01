@@ -4,6 +4,7 @@
 // first character — so the user's next keystroke overwrote the matched text.
 // These tests mount the real CodeEditor and assert focus stays in the find
 // input across the debounce and across Enter-to-cycle.
+import { useState } from "react";
 import { describe, it, expect, vi, beforeAll, afterEach } from "vitest";
 import { render, fireEvent, waitFor, screen, cleanup } from "@testing-library/react";
 import { CodeEditor } from "./CodeEditor";
@@ -231,5 +232,77 @@ describe("a closed FindReplaceBar", () => {
         await waitFor(() => expect(onJumpTo).toHaveBeenCalledWith(6, 11), {
             timeout: DEBOUNCE_MS * 20,
         });
+    });
+});
+
+/**
+ * Replace must never splice at offsets the debounced search computed for an older
+ * version of the text. The match list refreshes 100 ms after the content changes, so
+ * two quick presses of Replace used to hand the second press the FIRST press's
+ * offsets: "foo foo foo" -> Replace -> "x foo foo" -> Replace spliced three characters
+ * at offset 0 and produced "xoo foo".
+ *
+ * The real CodeEditor is mounted under a harness that feeds onChange back into the
+ * content prop, the way App does, so the bar sees the same prop sequence it sees in
+ * the app.
+ */
+describe("Replace against a stale match list", () => {
+    function Harness({ initial, onText }: { initial: string; onText: (t: string) => void }) {
+        const [text, setText] = useState(initial);
+        return (
+            <TestProviders>
+                <CodeEditor
+                    content={text}
+                    onChange={(t) => { setText(t); onText(t); }}
+                />
+            </TestProviders>
+        );
+    }
+
+    async function openReplace(initial: string, query: string, replacement: string, toggles: string[] = []) {
+        const onText = vi.fn();
+        const utils = render(<Harness initial={initial} onText={onText} />);
+        const content = await waitFor(() => {
+            const el = utils.container.querySelector<HTMLElement>(".cm-content");
+            expect(el).toBeTruthy();
+            return el!;
+        });
+        fireEvent.keyDown(content, { key: "h", ctrlKey: true });
+        for (const title of toggles) fireEvent.click(await screen.findByTitle(title));
+        fireEvent.change(await screen.findByLabelText("Find text"), { target: { value: query } });
+        fireEvent.change(screen.getByLabelText("Replace with"), { target: { value: replacement } });
+        await waitFor(() => expect(screen.getByRole("button", { name: "Replace" })).not.toBeDisabled(), {
+            timeout: DEBOUNCE_MS * 20,
+        });
+        const last = () => onText.mock.calls[onText.mock.calls.length - 1]?.[0];
+        return { last, button: screen.getByRole("button", { name: "Replace" }) };
+    }
+
+    it("two quick presses replace two separate matches (plain)", async () => {
+        const { last, button } = await openReplace("foo foo foo", "foo", "x");
+        fireEvent.click(button);
+        fireEvent.click(button); // well inside the 100 ms debounce
+        expect(last()).toBe("x x foo");
+    });
+
+    it("two quick presses replace two separate matches (match case)", async () => {
+        const { last, button } = await openReplace("foo Foo foo", "foo", "x", ["Match case"]);
+        fireEvent.click(button);
+        fireEvent.click(button);
+        expect(last()).toBe("x Foo x");
+    });
+
+    it("two quick presses replace two separate matches (regex)", async () => {
+        const { last, button } = await openReplace("a1 b2 c3", "([a-z])(\\d)", "$2$1", ["Regex"]);
+        fireEvent.click(button);
+        fireEvent.click(button);
+        expect(last()).toBe("1a 2b c3");
+    });
+
+    it("moves past a replacement that still contains the query", async () => {
+        const { last, button } = await openReplace("cat cat", "cat", "cats");
+        fireEvent.click(button);
+        fireEvent.click(button);
+        expect(last()).toBe("cats cats");
     });
 });
