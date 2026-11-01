@@ -1003,3 +1003,42 @@ describe("App pending review", () => {
         expect(screen.queryByText(/^Snapshot from/)).toBeNull();
     });
 });
+
+describe("App tab click focus", () => {
+    const tab = (name: string) => screen.getAllByRole("tab").find((t) => t.getAttribute("title") === name)!;
+    const clickTab = async (name: string) => {
+        await act(async () => {
+            // What a real click does: mousedown (where tabs activate) moves focus to the tab.
+            fireEvent.mouseDown(tab(name), { button: 0 });
+            tab(name).focus();
+        });
+    };
+
+    // Focus stayed on the clicked tab, so typing went nowhere and Backspace closed the
+    // document. FOCUS-01.
+    it("moves focus from a clicked tab into the reader", async () => {
+        boot();
+        await openViaDialog("/notes/a.md", "# A\n");
+        await openViaDialog("/notes/b.md", "# B\n");
+        // The reader is a lazy chunk; let it arrive before the click.
+        await waitFor(() => expect(document.querySelector("[data-split-right] main")).not.toBeNull(), { timeout: 10_000 });
+
+        await clickTab("a.md");
+
+        await waitFor(() => expect(document.activeElement).toBe(document.querySelector("[data-split-right] main")));
+        // Focusable for the keyboard to scroll it, but kept out of the Tab order.
+        expect(document.activeElement?.getAttribute("tabindex")).toBe("-1");
+    });
+
+    it("moves focus from a clicked tab into the editor when editing", async () => {
+        boot();
+        await openViaDialog("/notes/a.md", "# A\n");
+        await openViaDialog("/notes/b.md", "# B\n");
+        await press({ key: "e", ctrlKey: true });
+
+        await clickTab("a.md");
+
+        await waitFor(() => expect(document.activeElement?.classList.contains("cm-content")).toBe(true));
+        expect(tab("a.md").getAttribute("aria-selected")).toBe("true");
+    });
+});

@@ -12,6 +12,8 @@ import { useTheme } from "./context/useTheme";
 import { TitleBar } from "./components/TitleBar";
 import { WelcomeScreen } from "./components/WelcomeScreen";
 import { CodeEditor, type FindActionRunner } from "./components/CodeEditor";
+// Already in the main chunk with CodeEditor; used to focus the editor after a tab click.
+import { EditorView } from "@codemirror/view";
 import { StatusBar } from "./components/StatusBar";
 import { ModeToggle, type ViewMode } from "./components/ModeToggle";
 import { ToastStack } from "./components/Toast";
@@ -2071,6 +2073,36 @@ function AppContent() {
     }
   }, [closeManyClean, activateTab]);
 
+  // A mouse click on a tab means "show me this note", so the note takes focus, as in
+  // VS Code. Focus used to stay on the tab: typing went nowhere, and Delete (then also
+  // Backspace), the tab strip's keyboard close key, closed the document. Keyboard
+  // navigation of the strip does not come through here and keeps focus. FOCUS-01.
+  //
+  // One frame later, so it runs after the browser's own mousedown focus (which lands on
+  // the tab) and after the activated tab has rendered. Whichever view is visible wins:
+  // the editor in code and split, the reader in preview.
+  const focusDocument = useCallback(() => {
+    requestAnimationFrame(() => {
+      const root = splitContainerRef.current;
+      if (!root) return;
+      const editorPane = root.querySelector<HTMLElement>("[data-split-left]");
+      const editorDom = editorPane?.querySelector<HTMLElement>(".cm-editor");
+      if (editorPane && editorPane.style.display !== "none" && editorDom) {
+        // The view's own focus(), not the content element's: it puts CodeMirror's
+        // selection back in the DOM, where a bare focus() lets the browser drop the
+        // caret at the top of the document.
+        EditorView.findFromDOM(editorDom)?.focus();
+        return;
+      }
+      // The reader's scroller, so Space, PageDown and the arrows scroll it. It is not
+      // focusable on its own; -1 keeps it out of the Tab order.
+      const reader = root.querySelector<HTMLElement>("[data-split-right] main");
+      if (!reader) return;
+      if (!reader.hasAttribute("tabindex")) reader.tabIndex = -1;
+      reader.focus({ preventScroll: true });
+    });
+  }, []);
+
   // Right-click menu on a tab: {id, x, y} while open. TABS-12.
   const [tabMenu, setTabMenu] = useState<{ id: string; x: number; y: number } | null>(null);
   const handleTabContextMenu = useCallback((id: string, x: number, y: number) => {
@@ -2110,6 +2142,7 @@ function AppContent() {
           onNewTab={handleNewFile}
           onReorder={handleReorderTab}
           onContextMenu={handleTabContextMenu}
+          onPointerActivate={focusDocument}
         />
       )}
       {hasFile && activeTabId !== null && conflictedTabs.has(activeTabId) && (
@@ -2210,6 +2243,7 @@ function AppContent() {
             )}
 
             <div
+              data-split-right
               className="overflow-hidden flex flex-col relative"
               style={{
                 display: mode === "preview" || mode === "split" ? "flex" : "none",

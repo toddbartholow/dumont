@@ -20,9 +20,13 @@ interface TabBarProps {
     onReorder?: (fromIndex: number, toIndex: number) => void;
     /** Right-click context menu on a tab. TABS-12. */
     onContextMenu?: (id: string, x: number, y: number) => void;
+    /** A tab was activated with the mouse (after onSelect). The app moves focus into
+     *  the document so the click does not leave it on the tab. Keyboard activation
+     *  never calls this: arrowing along the strip keeps focus on it. FOCUS-01. */
+    onPointerActivate?: (id: string) => void;
 }
 
-function TabBarImpl({ tabs, activeId, onSelect, onClose, onNewTab, onReorder, onContextMenu }: TabBarProps) {
+function TabBarImpl({ tabs, activeId, onSelect, onClose, onNewTab, onReorder, onContextMenu, onPointerActivate }: TabBarProps) {
     const listRef = useRef<HTMLDivElement>(null);
     const tabRefs = useRef<Map<string, HTMLDivElement>>(new Map());
     const [dragIndex, setDragIndex] = useState<number | null>(null);
@@ -65,7 +69,10 @@ function TabBarImpl({ tabs, activeId, onSelect, onClose, onNewTab, onReorder, on
         } else if (e.key === "Enter" || e.key === " ") {
             e.preventDefault();
             onSelect(tabs[index].id);
-        } else if (e.key === "Delete" || e.key === "Backspace") {
+        } else if (e.key === "Delete") {
+            // Delete only. Backspace closed the tab too, and it is the key someone
+            // types to fix a typo when they think the caret is in the note: focus
+            // left on a clicked tab turned that into closing the document. FOCUS-01.
             e.preventDefault();
             onClose(tabs[index].id);
         }
@@ -117,7 +124,10 @@ function TabBarImpl({ tabs, activeId, onSelect, onClose, onNewTab, onReorder, on
                         onMouseDown={(e) => {
                             // Middle-click closes, like a browser.
                             if (e.button === 1) { e.preventDefault(); onClose(tab.id); }
-                            else if (e.button === 0) onSelect(tab.id);
+                            else if (e.button === 0) {
+                                onSelect(tab.id);
+                                onPointerActivate?.(tab.id);
+                            }
                         }}
                         onContextMenu={(e) => {
                             if (!onContextMenu) return;
