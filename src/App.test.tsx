@@ -76,6 +76,11 @@ const invoke = vi.fn(async (cmd: string, args?: Record<string, unknown>) => {
         // The file explorer reads this when it opens, and a null crashes it.
         case "list_directory_files":
             return [];
+        // One old version of every file, for the history panel's restore-as-review flow.
+        case "list_snapshots":
+            return [{ id: "snap-1", timestamp: Date.now() - 60_000, bytes: 9 }];
+        case "read_snapshot":
+            return "# Older\n";
         default:
             return null;
     }
@@ -113,7 +118,6 @@ vi.mock("@tauri-apps/plugin-dialog", () => ({
     ask: vi.fn(async () => false),
 }));
 vi.mock("@tauri-apps/plugin-opener", () => ({ revealItemInDir: vi.fn(async () => {}) }));
-vi.mock("@tauri-apps/plugin-fs", () => ({ writeTextFile: vi.fn(), writeFile: vi.fn() }));
 vi.mock("@tauri-apps/plugin-updater", () => ({ check: vi.fn(async () => null) }));
 vi.mock("@tauri-apps/plugin-process", () => ({ relaunch: vi.fn() }));
 
@@ -121,6 +125,7 @@ const { default: App } = await import("./App");
 const dialog = await import("@tauri-apps/plugin-dialog");
 const updater = await import("@tauri-apps/plugin-updater");
 const { getSavedViewMode } = await import("./utils/persistence");
+const { resetBootForTests } = await import("./utils/boot");
 
 beforeAll(installCodeMirrorDomPolyfills);
 
@@ -874,5 +879,188 @@ describe("App saving on the way out", () => {
 
         await waitFor(() => expect(win.destroy).toHaveBeenCalled());
         expect(disk.get("/notes/a.md")).toMatch(/\*\*/);
+    });
+});
+
+/**
+ * The session restore at launch. It reads every file before it commits anything, and that can
+ * take seconds; the app is live meanwhile. BOOT-01.
+ */
+describe("App session restore", () => {
+    beforeEach(() => {
+        // Boot runs once per webview load, so once per module here unless it is reset.
+        resetBootForTests();
+    });
+
+    const seedSession = (...paths: string[]) => {
+        for (const p of paths) {
+            disk.set(p, `# ${p}\n`);
+            mtimes.set(p, 1);
+        }
+        localStorage.setItem(
+            "dumont:session",
+            JSON.stringify({ tabs: paths.map((path) => ({ path })), activeIndex: 0 }),
+        );
+    };
+    const tabNames = () => screen.getAllByRole("tab").map((t) => t.getAttribute("title"));
+    const activeTabName = () =>
+        screen.getAllByRole("tab").find((t) => t.getAttribute("aria-selected") === "true")?.getAttribute("title");
+
+    it("reopens every tab of the last session", async () => {
+        seedSession("/notes/a.md", "/notes/b.md");
+        boot();
+
+        await waitFor(() => expect(tabNames()).toEqual(["a.md", "b.md"]));
+        expect(activeTabName()).toBe("a.md");
+    });
+
+    it("keeps a new note started while the session was restoring, and leaves it in front", async () => {
+        seedSession("/notes/a.md", "/notes/b.md");
+        const release = holdReads();
+        boot();
+
+        await press({ key: "n", ctrlKey: true });
+        fireEvent.click(await screen.findByRole("button", { name: /bold/i }));
+        await waitFor(() => expect(document.querySelector(".cm-content")!.textContent).toMatch(/\*\*/));
+
+        await release();
+
+        await waitFor(() => expect(tabNames()).toEqual(["a.md", "b.md", "Untitled-1.md"]));
+        expect(activeTabName()).toBe("Untitled-1.md");
+        expect(document.querySelector(".cm-content")!.textContent).toMatch(/\*\*/);
+    });
+
+    it("does not open a second tab for a restored file the user already opened", async () => {
+        seedSession("/notes/a.md", "/notes/b.md");
+        const release = holdReads();
+        boot();
+
+        nextOpenPath = "/notes/b.md";
+        await press({ key: "o", ctrlKey: true });
+        await release();
+
+        await waitFor(() => expect(tabNames()).toEqual(["a.md", "b.md"]));
+        expect(activeTabName()).toBe("b.md");
+    });
+});
+
+describe("App new file", () => {
+    const tabNames = () => screen.getAllByRole("tab").map((t) => t.getAttribute("title"));
+
+    // The reuse check read the active tab's snapshot, which lags the live buffer, so an
+    // Untitled tab with text in it looked pristine and New File stayed put. TABS-17.
+    it("opens a second note after typing in a fresh one, and keeps what was typed", async () => {
+        boot();
+        await press({ key: "n", ctrlKey: true });
+        fireEvent.click(await screen.findByRole("button", { name: /bold/i }));
+        await waitFor(() => expect(document.querySelector(".cm-content")!.textContent).toMatch(/\*\*/));
+
+        await press({ key: "n", ctrlKey: true });
+
+        await waitFor(() => expect(tabNames()).toEqual(["Untitled-1.md", "Untitled-2.md"]));
+        expect(document.querySelector(".cm-content")!.textContent).not.toMatch(/\*\*/);
+        await act(async () => {
+            fireEvent.mouseDown(screen.getByRole("tab", { name: /Untitled-1/ }), { button: 0 });
+        });
+        await waitFor(() => expect(document.querySelector(".cm-content")!.textContent).toMatch(/\*\*/));
+    });
+
+    it("still reuses an untouched Untitled tab instead of stacking another", async () => {
+        boot();
+        await press({ key: "n", ctrlKey: true });
+        await waitFor(() => expect(tabNames()).toEqual(["Untitled-1.md"]));
+
+        await press({ key: "n", ctrlKey: true });
+
+        expect(tabNames()).toEqual(["Untitled-1.md"]);
+    });
+});
+
+describe("App pending review", () => {
+    const bootWithHistory = () =>
+        render(
+            <TestProviders settings={{ "files.history": true }}>
+                <App />
+            </TestProviders>,
+        );
+
+    // loadFileDirect never dropped the proposal, so the previous file's review stayed up
+    // over the newly opened one, where accepting it would write the old text in.
+    it("is dropped when a different file opens", async () => {
+        bootWithHistory();
+        await openViaDialog("/notes/a.md", "# A\n");
+        fireEvent.click(screen.getByRole("button", { name: "Open version history" }));
+        const latest = await screen.findByText("Latest");
+        await act(async () => {
+            fireEvent.click(latest.closest("button")!);
+        });
+        await screen.findByText(/^Snapshot from/);
+
+        await openViaDialog("/notes/b.md", "# B\n");
+
+        await waitFor(() => expect(screen.getByRole("tab", { selected: true }).getAttribute("title")).toBe("b.md"));
+        expect(screen.queryByText(/^Snapshot from/)).toBeNull();
+    });
+});
+
+describe("App tab click focus", () => {
+    const tab = (name: string) => screen.getAllByRole("tab").find((t) => t.getAttribute("title") === name)!;
+    const clickTab = async (name: string) => {
+        await act(async () => {
+            // What a real click does: mousedown (where tabs activate) moves focus to the tab.
+            fireEvent.mouseDown(tab(name), { button: 0 });
+            tab(name).focus();
+        });
+    };
+
+    // Focus stayed on the clicked tab, so typing went nowhere and Backspace closed the
+    // document. FOCUS-01.
+    it("moves focus from a clicked tab into the reader", async () => {
+        boot();
+        await openViaDialog("/notes/a.md", "# A\n");
+        await openViaDialog("/notes/b.md", "# B\n");
+        // The reader is a lazy chunk; let it arrive before the click.
+        await waitFor(() => expect(document.querySelector("[data-split-right] main")).not.toBeNull(), { timeout: 10_000 });
+
+        await clickTab("a.md");
+
+        await waitFor(() => expect(document.activeElement).toBe(document.querySelector("[data-split-right] main")));
+        // Focusable for the keyboard to scroll it, but kept out of the Tab order.
+        expect(document.activeElement?.getAttribute("tabindex")).toBe("-1");
+    });
+
+    it("moves focus from a clicked tab into the editor when editing", async () => {
+        boot();
+        await openViaDialog("/notes/a.md", "# A\n");
+        await openViaDialog("/notes/b.md", "# B\n");
+        await press({ key: "e", ctrlKey: true });
+
+        await clickTab("a.md");
+
+        await waitFor(() => expect(document.activeElement?.classList.contains("cm-content")).toBe(true));
+        expect(tab("a.md").getAttribute("aria-selected")).toBe("true");
+    });
+});
+
+describe("App side panel layout", () => {
+    // The panels start right below the title bar, so an open one covered the first tabs:
+    // the content was inset beside it, the tab strip was not. RLL-03.
+    it("insets the tab bar beside an open side panel, as it does the content", async () => {
+        const { container } = boot();
+        await openViaDialog("/notes/a.md", "# A\n");
+        // jsdom drops min() from inline styles, so read the reservation from the root's
+        // variable and check that each region pads by that variable.
+        const root = container.firstElementChild as HTMLElement;
+        const reserved = () => root.style.getPropertyValue("--panel-inset-left");
+        const tabBar = screen.getByRole("tablist").parentElement!;
+        const content = document.querySelector<HTMLElement>("[data-split-left]")!.parentElement!;
+        expect(reserved()).toBe("0px");
+        expect(tabBar.style.paddingLeft).toBe("var(--panel-inset-left)");
+        expect(content.style.paddingLeft).toBe("var(--panel-inset-left)");
+
+        fireEvent.click(screen.getByRole("button", { name: "Open table of contents" }));
+
+        await waitFor(() => expect(reserved()).toBe("min(288px, 90vw)"));
+        expect(screen.getByRole("tablist").parentElement!.style.paddingLeft).toBe("var(--panel-inset-left)");
     });
 });

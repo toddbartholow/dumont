@@ -1,12 +1,8 @@
 import { useMemo, useEffect, useRef, useState } from "react";
 import { attachFocusTrap } from "../utils/focusTrap";
+import { extractHeadings, type OutlineHeading } from "../utils/outline";
 
-interface TocItem {
-    id: string;
-    text: string;
-    level: number;
-    line: number;
-}
+type TocItem = OutlineHeading;
 
 interface TableOfContentsProps {
     isOpen: boolean;
@@ -30,24 +26,10 @@ export function TableOfContents({
         // every line for headings on every keystroke for users who don't
         // currently have the outline visible.
         if (!isOpen || !content) return [];
-        const normalized = content.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
-        const lines = normalized.split("\n");
-        const items: TocItem[] = [];
-
-        lines.forEach((line, index) => {
-            const trimmed = line.trim();
-            const match = trimmed.match(/^(#{1,6})\s+(.+)$/);
-            if (match) {
-                const level = match[1].length;
-                const text = match[2].trim();
-                const id = `heading-${index}-${text
-                    .toLowerCase()
-                    .replace(/[^a-z0-9]+/g, "-")
-                    .replace(/^-|-$/g, "")}`;
-                items.push({ id, text, level, line: index + 1 });
-            }
-        });
-        return items;
+        // The shared extractor skips frontmatter and code, reads setext
+        // headings, strips inline markdown, and names each entry with the id
+        // the preview gives that heading.
+        return extractHeadings(content);
     }, [content, isOpen]);
 
     // Active heading: the last one whose source line is at-or-above the active line

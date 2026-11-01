@@ -115,9 +115,11 @@ export function FileExplorer({
             // Navigate into the folder
             setCurrentViewDir(entry.path);
         } else {
-            // Select the file and close
+            // Open the file and stay open. Closing after every pick was a holdover from
+            // when the panel covered the note; it now sits beside it (App insets the
+            // content), and the window's minimum width leaves room for both, so there
+            // is no narrow overlay mode that needs the space back. #225.
             onFileSelect(entry.path);
-            onClose();
         }
     };
     

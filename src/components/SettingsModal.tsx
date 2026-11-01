@@ -23,6 +23,7 @@ import { setAIKey, aiKeyPresent } from "../utils/persistence";
 import { AI_PROVIDERS, matchProvider, type AIProvider } from "../utils/aiProviders";
 import { attachFocusTrap } from "../utils/focusTrap";
 import { isValidEndpoint, runAIAction } from "../utils/aiAssist";
+import { isPlainHttpToRemoteHost } from "../utils/aiEndpoint";
 import { THEMES, FONTS, fontStack, isBundledFont, fontOptionsFor } from "../utils/appearanceOptions";
 import { resolveTheme } from "../themes";
 import { themesDir } from "../themes/userThemes";
@@ -391,6 +392,10 @@ export function SettingsModal({ isOpen, onClose, initialJson = false, onAiKeyPre
 
     const aiEndpointInvalid = ai.endpoint.length > 0 && !isValidEndpoint(ai.endpoint);
     const aiConfigured = !!ai.endpoint && !aiEndpointInvalid && !!ai.model;
+    // Rust will not attach a saved key to a plain-http request for another
+    // machine, so say so here rather than let the request fail without a reason.
+    // A key typed but not yet committed counts: it is about to be saved.
+    const aiKeyOverPlainHttp = (keySaved || ai.apiKey.length > 0) && isPlainHttpToRemoteHost(ai.endpoint);
 
     // Connection-test state for the "Test connection" button (AI-04).
     const [aiTest, setAiTest] = useState<{ state: "idle" | "testing" | "ok" | "error"; msg?: string }>({ state: "idle" });
@@ -950,6 +955,11 @@ export function SettingsModal({ isOpen, onClose, initialJson = false, onAiKeyPre
                                         {aiEndpointInvalid && (
                                             <span className="block mt-1 text-[11px] text-[var(--danger)]">Must be a valid http:// or https:// URL.</span>
                                         )}
+                                        {aiKeyOverPlainHttp && (
+                                            <span role="status" className="block mt-1 text-[11px] text-[var(--danger-text)]">
+                                                Plain http to another machine: your saved API key will not be sent there. Use https://, or clear the key if this server does not need one.
+                                            </span>
+                                        )}
                                     </label>
                                     <label className="block">
                                         <span className="text-xs font-semibold text-[var(--text-secondary)] uppercase tracking-wider">Model</span>
@@ -977,6 +987,8 @@ export function SettingsModal({ isOpen, onClose, initialJson = false, onAiKeyPre
                                             value={ai.apiKey}
                                             onChange={(e) => updateAi({ apiKey: e.target.value })}
                                             onBlur={commitAi}
+                                            autoComplete="off"
+                                            spellCheck={false}
                                             placeholder={keySaved ? "••••••••" : activeProvider?.keyOptional ? "(not needed for this provider)" : activeProvider ? `paste your ${activeProvider.name} API key` : "(optional for local providers)"}
                                             className="mt-1 w-full px-3 py-2 text-sm bg-[var(--bg-input)] border border-[var(--border)] rounded-[var(--radius-md)] text-[var(--text-primary)] outline-none focus:border-[var(--accent)] font-mono"
                                         />
@@ -1001,7 +1013,10 @@ export function SettingsModal({ isOpen, onClose, initialJson = false, onAiKeyPre
                                         )}
                                     </div>
                                     <p className="text-[11px] text-[var(--text-secondary)] leading-relaxed">
-                                        <strong>Privacy:</strong> your selected text is sent <strong>unencrypted</strong> to the endpoint you configure above.
+                                        <strong>Privacy:</strong> each message in the AI panel sends the <strong>whole open document</strong>, your
+                                        selection, and the recent chat history to the endpoint you configure above. The selection bubble's actions send only
+                                        the selected text. Over https that traffic is encrypted in transit, but the provider still receives all of it; a plain
+                                        http:// endpoint sends it unencrypted.
                                         For private notes, use a local provider (e.g. Ollama at <code>http://localhost:11434/v1/chat/completions</code>) so nothing leaves your machine.
                                         The API key is stored in your operating system's keychain (Windows Credential Manager, macOS Keychain, or Linux Secret Service), not in plaintext.
                                     </p>

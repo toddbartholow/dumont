@@ -9,7 +9,7 @@ mod pdf;
 mod settings;
 mod themes;
 
-use commands::{read_file, save_file, get_file_info, list_directory_files, search_files, find_backlinks, save_image, read_image_file, ai_key_present, set_ai_key};
+use commands::{read_file, save_file, write_export_file, get_file_info, list_directory_files, search_files, find_backlinks, save_image, read_image_file, ai_key_present, set_ai_key};
 use tauri::{Manager, Emitter};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
@@ -139,6 +139,12 @@ pub fn run() {
     //     white pre-paint surface only stays off screen because the frontend
     //     reveals it once it has painted (#98). Restoring visibility from the
     //     saved state would put that flash straight back.
+    //
+    // Only the main window is tracked. PDF export opens hidden `pdf-export-N`
+    // windows (pdf.rs). Without the filter each one was written to the state
+    // file, and since the labels restart at 0 every launch, the next session's
+    // export windows were restored to that saved geometry instead of the page
+    // size pdf.rs gives them.
     #[cfg(desktop)]
     {
         use tauri_plugin_window_state::StateFlags;
@@ -150,13 +156,13 @@ pub fn run() {
                         | StateFlags::MAXIMIZED
                         | StateFlags::FULLSCREEN,
                 )
+                .with_filter(|label| label == "main")
                 .build(),
         );
     }
 
     builder
         .plugin(tauri_plugin_opener::init())
-        .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             // Updater (GitHub latest.json) + process (relaunch after install)
@@ -224,6 +230,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             read_file,
             save_file,
+            write_export_file,
             get_file_info,
             list_directory_files,
             search_files,

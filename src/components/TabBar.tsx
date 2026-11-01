@@ -3,9 +3,10 @@ import { shortcutLabel } from "../utils/platform";
 
 export interface TabBarItem {
     id: string;
-    /** Bare file name — used for the tooltip and accessible name. */
+    /** Bare file name, for the tooltip and the close button's name. */
     name: string;
-    /** Display label; may be disambiguated with a folder suffix (TABS-09). */
+    /** Display label and the tab's accessible name; may be disambiguated with a
+     *  folder suffix (TABS-09). */
     label: string;
     dirty: boolean;
 }
@@ -20,9 +21,13 @@ interface TabBarProps {
     onReorder?: (fromIndex: number, toIndex: number) => void;
     /** Right-click context menu on a tab. TABS-12. */
     onContextMenu?: (id: string, x: number, y: number) => void;
+    /** A tab was activated with the mouse (after onSelect). The app moves focus into
+     *  the document so the click does not leave it on the tab. Keyboard activation
+     *  never calls this: arrowing along the strip keeps focus on it. FOCUS-01. */
+    onPointerActivate?: (id: string) => void;
 }
 
-function TabBarImpl({ tabs, activeId, onSelect, onClose, onNewTab, onReorder, onContextMenu }: TabBarProps) {
+function TabBarImpl({ tabs, activeId, onSelect, onClose, onNewTab, onReorder, onContextMenu, onPointerActivate }: TabBarProps) {
     const listRef = useRef<HTMLDivElement>(null);
     const tabRefs = useRef<Map<string, HTMLDivElement>>(new Map());
     const [dragIndex, setDragIndex] = useState<number | null>(null);
@@ -65,7 +70,10 @@ function TabBarImpl({ tabs, activeId, onSelect, onClose, onNewTab, onReorder, on
         } else if (e.key === "Enter" || e.key === " ") {
             e.preventDefault();
             onSelect(tabs[index].id);
-        } else if (e.key === "Delete" || e.key === "Backspace") {
+        } else if (e.key === "Delete") {
+            // Delete only. Backspace closed the tab too, and it is the key someone
+            // types to fix a typo when they think the caret is in the note: focus
+            // left on a clicked tab turned that into closing the document. FOCUS-01.
             e.preventDefault();
             onClose(tabs[index].id);
         }
@@ -90,6 +98,10 @@ function TabBarImpl({ tabs, activeId, onSelect, onClose, onNewTab, onReorder, on
                             else tabRefs.current.delete(tab.id);
                         }}
                         role="tab"
+                        // The bullet is visual only; the unsaved state is spoken
+                        // here. Naming the tab also keeps the icon's ligature
+                        // text ("description") out of its accessible name. #178.
+                        aria-label={tab.dirty ? `${tab.label} (unsaved changes)` : tab.label}
                         aria-selected={isActive}
                         tabIndex={isActive ? 0 : -1}
                         title={tab.name}
@@ -117,7 +129,10 @@ function TabBarImpl({ tabs, activeId, onSelect, onClose, onNewTab, onReorder, on
                         onMouseDown={(e) => {
                             // Middle-click closes, like a browser.
                             if (e.button === 1) { e.preventDefault(); onClose(tab.id); }
-                            else if (e.button === 0) onSelect(tab.id);
+                            else if (e.button === 0) {
+                                onSelect(tab.id);
+                                onPointerActivate?.(tab.id);
+                            }
                         }}
                         onContextMenu={(e) => {
                             if (!onContextMenu) return;
@@ -132,15 +147,19 @@ function TabBarImpl({ tabs, activeId, onSelect, onClose, onNewTab, onReorder, on
                     >
                         {/* Active-tab top accent */}
                         {isActive && <span className="absolute left-0 top-0 h-[2px] w-full bg-[var(--accent)]" aria-hidden="true" />}
-                        <span className="material-symbols-outlined text-[14px] shrink-0 opacity-70">description</span>
-                        <span className="truncate text-xs">{tab.label}</span>
-                        {/* Trailing control. On hover it's always a close (×)
-                            button. When the tab has unsaved edits and isn't
-                            hovered, it shows a small "unsaved" dot instead —
-                            same color as the status bar's unsaved indicator, so
-                            the meaning is consistent across the app. The dot is a
-                            plain filled circle (not the Material `circle` glyph,
-                            which renders as a hollow ring under FILL 0). */}
+                        <span className="material-symbols-outlined text-[14px] shrink-0 opacity-70" aria-hidden="true">description</span>
+                        {/* Unsaved marker: "• name", the same convention as the
+                            window title, on every dirty tab, active or not, and
+                            still there on hover. Clean tabs keep the bullet laid
+                            out but invisible, so a tab never changes width on the
+                            first keystroke or on save. It replaces the dot that
+                            used to sit in the close slot (small, at the far edge,
+                            gone on hover), so a tab shows one indicator, not two. */}
+                        <span className="truncate text-xs">
+                            <span className={tab.dirty ? undefined : "invisible"} aria-hidden="true">{"• "}</span>
+                            {tab.label}
+                        </span>
+                        {/* Trailing close (×) button, shown on hover. */}
                         <button
                             onMouseDown={(e) => { e.stopPropagation(); }}
                             onClick={(e) => { e.stopPropagation(); onClose(tab.id); }}
@@ -149,16 +168,8 @@ function TabBarImpl({ tabs, activeId, onSelect, onClose, onNewTab, onReorder, on
                             title={tab.dirty ? "Unsaved changes. Click to close." : "Close"}
                             className="shrink-0 w-4 h-4 flex items-center justify-center rounded hover:bg-[var(--bg-hover)] text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
                         >
-                            {tab.dirty && (
-                                <span
-                                    className="w-1.5 h-1.5 rounded-full bg-[var(--status-unsaved)] group-hover/tab:hidden"
-                                    aria-hidden="true"
-                                />
-                            )}
                             <span
-                                className={`material-symbols-outlined text-[16px] leading-none ${
-                                    tab.dirty ? "hidden group-hover/tab:inline" : "opacity-0 group-hover/tab:opacity-100"
-                                }`}
+                                className="material-symbols-outlined text-[16px] leading-none opacity-0 group-hover/tab:opacity-100"
                                 aria-hidden="true"
                             >close</span>
                         </button>

@@ -32,6 +32,10 @@ const formatReadingTime = (min: number): string => {
     return rem === 0 ? `${hours}h read` : `${hours}h ${rem}m read`;
 };
 
+/** "1 word", "2 words", "1,024 characters". */
+const count = (n: number, noun: string): string =>
+    `${n.toLocaleString()} ${n === 1 ? noun : `${noun}s`}`;
+
 function StatusBarImpl({
     isSaved,
     lineNumber,
@@ -53,8 +57,11 @@ function StatusBarImpl({
 }: StatusBarProps) {
     const hasSelection = selectionLength > 0;
     return (
+        // Not a live region. role="status" on the whole footer made screen readers
+        // read out Ln/Col and the word count on every keystroke. Only the save state
+        // is announced, from its own narrow polite region below. A11Y-05.
         <footer
-            role="status"
+            aria-label="Status bar"
             className="h-7 shrink-0 bg-[var(--bg-titlebar)] border-t border-[var(--border)] px-4 flex items-center justify-between text-[11px] font-medium tracking-wide text-[var(--text-secondary)] no-select transition-colors"
         >
             <div className="flex items-center gap-1">
@@ -130,7 +137,7 @@ function StatusBarImpl({
                             : "bg-[var(--status-unsaved)] shadow-[0_0_4px_rgba(255,184,108,0.4)] status-dot-unsaved"
                             }`}
                     ></span>
-                    <span className="transition-colors">{isSaved ? "Saved" : "Unsaved"}</span>
+                    <span className="transition-colors" role="status" aria-live="polite">{isSaved ? "Saved" : "Unsaved"}</span>
                 </div>
                 {(mode === "code" || mode === "split") && (
                     <div className="hover:text-[var(--text-primary)] cursor-default transition-colors">
@@ -142,14 +149,14 @@ function StatusBarImpl({
                         className={`flex items-center gap-1 cursor-default transition-colors ${hasSelection ? "text-[var(--accent)]" : "hover:text-[var(--text-primary)]"}`}
                         title={
                             hasSelection
-                                ? `Selection: ${selectionWordCount.toLocaleString()} words, ${selectionLength.toLocaleString()} characters`
-                                : (charCount !== undefined ? `${charCount.toLocaleString()} characters` : undefined)
+                                ? `Selection: ${count(selectionWordCount, "word")}, ${count(selectionLength, "character")}`
+                                : (charCount !== undefined ? count(charCount, "character") : undefined)
                         }
                     >
-                        <span className="material-symbols-outlined text-[14px] opacity-70">text_fields</span>
+                        <span className="material-symbols-outlined text-[14px] opacity-70" aria-hidden="true">text_fields</span>
                         {hasSelection
-                            ? `${selectionWordCount.toLocaleString()} / ${wordCount.toLocaleString()} words`
-                            : `${wordCount.toLocaleString()} words`}
+                            ? `${selectionWordCount.toLocaleString()} / ${count(wordCount, "word")}`
+                            : count(wordCount, "word")}
                     </div>
                 )}
                 {readingTimeMin !== undefined && readingTimeMin > 0 && (
@@ -157,7 +164,7 @@ function StatusBarImpl({
                         className="flex items-center gap-1 hover:text-[var(--text-primary)] cursor-default transition-colors"
                         title="Estimated reading time at 200 wpm"
                     >
-                        <span className="material-symbols-outlined text-[14px] opacity-70">schedule</span>
+                        <span className="material-symbols-outlined text-[14px] opacity-70" aria-hidden="true">schedule</span>
                         {formatReadingTime(readingTimeMin)}
                     </div>
                 )}

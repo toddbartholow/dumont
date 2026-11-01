@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect, useCallback } from "react";
-import Markdown from "react-markdown";
+import Markdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import { streamChat, buildAskMessages, buildAgentMessages, parseEdits, type ChatMessage } from "../utils/aiChat";
 import type { AIConfig } from "../utils/aiAssist";
 
@@ -34,6 +35,52 @@ interface UIMessage {
     role: "user" | "assistant";
     content: string;
 }
+
+// A reply is markdown from an outside endpoint, and the open document goes into
+// every request, so the document can steer what the reply says (prompt
+// injection). A plain <a href> in it would navigate the app window itself and
+// take every unsaved buffer with it. So no link in a reply ever navigates: http(s)
+// and mailto open in the OS handler, as in the preview, and anything else is
+// inert text. Middle click is blocked as well, since onClick never sees it and the
+// webview would turn it into a new-window request. Nothing is draggable, so a
+// link cannot be dropped back onto the window either.
+//
+// Images never load. A reply can put document text into an image URL, and
+// fetching it would hand that text to whoever runs the host. The CSP refuses a
+// remote img-src already; this keeps replies from depending on that, and an image
+// can neither be clicked nor dragged into a navigation. The alt text stands in.
+//
+// Module scope keeps the renderers' identity stable, so a streamed delta does not
+// remount the whole markdown tree.
+const EXTERNAL_LINK = /^(https?:|mailto:)/i;
+
+const REPLY_COMPONENTS: Components = {
+    a: ({ href, children, title }) => {
+        if (typeof href !== "string" || !EXTERNAL_LINK.test(href)) {
+            return <span data-ai-link="inert">{children}</span>;
+        }
+        return (
+            <a
+                href={href}
+                title={title ?? href}
+                rel="noopener noreferrer"
+                draggable={false}
+                onClick={(e) => {
+                    e.preventDefault();
+                    openUrl(href).catch(() => {/* opener unavailable */});
+                }}
+                onAuxClick={(e) => e.preventDefault()}
+            >
+                {children}
+            </a>
+        );
+    },
+    img: ({ alt }) => (
+        <span data-ai-image="blocked" className="text-[var(--text-secondary)]">
+            [image{alt ? `: ${alt}` : ""}]
+        </span>
+    ),
+};
 
 // Keep the last N turns as conversation context (token efficiency — the document
 // itself is attached only to the latest turn inside buildAskMessages).
@@ -259,7 +306,7 @@ export function AIPanel({ isOpen, onClose, note, fileName, selectionText, aiConf
                                 <div className="max-w-[92%] px-3 py-2 rounded-[var(--radius-md)] bg-[var(--bg-input)] border border-[var(--border-subtle)] text-sm w-full">
                                     {m.content ? (
                                         <div className="markdown-body !text-sm [&_*]:!text-sm [&_h1]:!text-base [&_h2]:!text-sm [&_pre]:!text-xs">
-                                            <Markdown remarkPlugins={[remarkGfm]}>{m.content}</Markdown>
+                                            <Markdown remarkPlugins={[remarkGfm]} components={REPLY_COMPONENTS}>{m.content}</Markdown>
                                         </div>
                                     ) : (
                                         <span className="inline-flex gap-1 text-[var(--text-secondary)]">

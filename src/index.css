@@ -584,12 +584,21 @@ select:focus-visible,
   color: var(--syntax-list);
 }
 
-/* GFM task lists ([ ] / [x]) render as <ul class="contains-task-list"> with a
-   checkbox per item — keep those flush and bullet-free so the checkbox stands
-   alone (GitHub-style), without a stray disc beside it. */
-.markdown-body ul.contains-task-list {
+/* GFM task items ([ ] / [x]) render as <li class="task-list-item"> with a
+   checkbox. The checkbox takes the bullet's place: the bullet is hidden on the
+   task item ITSELF and the checkbox is pulled left into the list's padding,
+   where the marker would sit. This used to hide the bullets of the whole
+   <ul class="contains-task-list">, so one task in a list stripped the bullet
+   from every plain item in it. A loose list wraps the item in a <p>, hence the
+   second selector. */
+.markdown-body li.task-list-item {
   list-style-type: none;
-  padding-left: 0;
+}
+
+.markdown-body li.task-list-item > input[type="checkbox"],
+.markdown-body li.task-list-item > p:first-child > input[type="checkbox"]:first-child {
+  margin: 0 0.5em 0.2em -1.5rem;
+  vertical-align: middle;
 }
 
 .markdown-body blockquote {

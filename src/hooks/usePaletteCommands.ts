@@ -5,6 +5,7 @@ import { type PaletteCommand } from "../components/CommandPalette";
 import type { ModalName } from "./useModals";
 import { computeTabLabels, type TabState } from "../utils/tabsModel";
 import { getRecentFiles } from "../utils/persistence";
+import { extractHeadings } from "../utils/outline";
 import { THEMES } from "../utils/appearanceOptions";
 import type { Theme } from "../context/ThemeContext";
 import type { ViewMode } from "../components/ModeToggle";
@@ -449,31 +450,23 @@ export function usePaletteCommands(input: PaletteCommandsInput): PaletteCommand[
     // at the palette.
     const headingPaletteItems = useMemo<PaletteCommand[]>(() => {
       if (!showPalette || !deferredContent) return [];
-      const items: PaletteCommand[] = [];
-      const lines = deferredContent.split("\n");
-      lines.forEach((line, idx) => {
-        const m = line.match(/^(#{1,6})\s+(.+)$/);
-        if (m) {
-          const level = m[1].length;
-          const text = m[2].trim();
-          items.push({
-            id: `head.${idx}`,
-            label: text,
-            hint: `H${level}`,
-            section: "Headings",
-            icon: level === 1 ? "title" : level === 2 ? "format_h2" : "format_h3",
-            keywords: "jump heading",
-            run: () => {
-              // Jump both panes to the heading's source line. The editor and the
-              // preview each listen for this event and scroll themselves (hidden
-              // panes scroll harmlessly), so this works in every view mode and
-              // lands on the RIGHT heading even when titles repeat. NAV-01.
-              window.dispatchEvent(new CustomEvent("dumont:goto-line", { detail: { line: idx + 1 } }));
-            },
-          });
-        }
-      });
-      return items;
+      // Same extractor as the outline panel: no `#` lines from code fences or
+      // frontmatter, setext headings included, inline markdown stripped.
+      return extractHeadings(deferredContent).map(({ text, level, line }) => ({
+        id: `head.${line - 1}`,
+        label: text,
+        hint: `H${level}`,
+        section: "Headings",
+        icon: level === 1 ? "title" : level === 2 ? "format_h2" : "format_h3",
+        keywords: "jump heading",
+        run: () => {
+          // Jump both panes to the heading's source line. The editor and the
+          // preview each listen for this event and scroll themselves (hidden
+          // panes scroll harmlessly), so this works in every view mode and
+          // lands on the RIGHT heading even when titles repeat. NAV-01.
+          window.dispatchEvent(new CustomEvent("dumont:goto-line", { detail: { line } }));
+        },
+      }));
     }, [showPalette, deferredContent]);
 
     // "Open tabs" palette section — jump to any open tab by name (only worthwhile

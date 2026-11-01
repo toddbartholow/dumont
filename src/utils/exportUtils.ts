@@ -6,9 +6,10 @@ import { fontStack } from './appearanceOptions';
 import { resolveThemeStyles, type ThemeDef } from '../themes';
 import { typeScale } from './typeScale';
 import { save } from '@tauri-apps/plugin-dialog';
-import { writeTextFile, writeFile } from '@tauri-apps/plugin-fs';
+import { writeExportFile } from './exportWrite';
 import { invoke } from '@tauri-apps/api/core';
-import DOMPurify from 'dompurify';
+import { sanitizeDiagramSvg } from './diagramSanitize';
+import { katexExportCss } from './katexExport';
 
 // The one amber every theme highlights with, lifted from `.markdown-body mark` in
 // index.css. It is deliberately not a theme token: the app paints ==highlight==
@@ -298,6 +299,18 @@ function generateExportCSS(
             transform: scale(1.1);
         }
 
+        /* GFM task items: the checkbox takes the bullet's place on the task
+           item itself, so a list mixing tasks and plain items keeps the plain
+           items' bullets. Mirrors index.css. */
+        li.task-list-item {
+            list-style-type: none;
+        }
+        li.task-list-item > input[type="checkbox"],
+        li.task-list-item > p:first-child > input[type="checkbox"]:first-child {
+            margin: 0 0.5em 0.2em -1.5rem;
+            vertical-align: middle;
+        }
+
         /* Syntax highlighting */
         .hljs-keyword { color: ${c['--hljs-keyword']}; }
         .hljs-string { color: ${c['--hljs-string']}; }
@@ -344,7 +357,8 @@ function neutralizeCss(css: string): string {
  *    ligatures render as literal words like "link" without the icon font);
  *  - inlines blob: image URLs as data: URIs — blob URLs are session-bound, so
  *    exported files referencing them show broken images;
- *  - neutralizes wikilink: hrefs (app-internal scheme) into plain text.
+ *  - turns wikilinks into plain text, and drops the preview-only attributes
+ *    (source-line anchors, link markers, a stray react-markdown `node`);
  *  - re-sanitizes mermaid SVGs, the one rendered path that skips the Markdown
  *    sanitizer, so a shared export carries neither script nor a phone-home CSS
  *    url() (SECURITY, Finding 2).
@@ -357,11 +371,21 @@ export async function prepareExportHtml(rawHtml: string): Promise<string> {
     root.querySelectorAll("button").forEach((b) => b.remove());
     root.querySelectorAll(".material-symbols-outlined").forEach((s) => s.remove());
 
-    root.querySelectorAll("a[href^='wikilink:']").forEach((a) => {
+    // Wikilinks resolve by searching the vault, which a standalone file cannot
+    // do, so they export as their text. The preview renders them as href="#"
+    // plus data-wikilink, so the old `href^='wikilink:'` selector alone never
+    // matched and every export shipped dead "#" links.
+    root.querySelectorAll("a[data-wikilink], a[href^='wikilink:']").forEach((a) => {
         const span = doc.createElement("span");
         span.textContent = a.textContent;
         a.replaceWith(span);
     });
+
+    // Preview plumbing that means nothing in a shared file. Classes stay:
+    // KaTeX and highlight.js styling depends on them.
+    for (const attr of ["data-source-line", "data-relative-md", "data-wikilink", "node"]) {
+        root.querySelectorAll(`[${attr}]`).forEach((el) => el.removeAttribute(attr));
+    }
 
     for (const img of Array.from(root.querySelectorAll("img"))) {
         const src = img.getAttribute("src") || "";
@@ -382,22 +406,14 @@ export async function prepareExportHtml(rawHtml: string): Promise<string> {
     }
 
     // Mermaid is the one rendered-content path that never passes through the
-    // Markdown sanitizer: MermaidBlock injects the SVG with dangerouslySetInnerHTML,
-    // trusting mermaid's own securityLevel:strict. In the app the CSP is a backstop,
-    // but a standalone exported .html has NO CSP, so a mermaid or DOMPurify bypass
-    // would run script in whoever opens the export downstream. Re-sanitize each SVG
-    // here as an independent gate: the shapes, native <text> labels, and colors
-    // survive; any script, event handler, or javascript: URL does not.
+    // Markdown sanitizer. MermaidBlock already runs its SVG through DOMPurify,
+    // but a standalone exported .html has NO CSP, so the export re-sanitizes as
+    // an independent gate against whatever the live DOM holds: the shapes, the
+    // <text> and htmlLabels <foreignObject> labels, and the colors survive; any
+    // script, event handler, or javascript: URL does not. One config for both,
+    // in utils/diagramSanitize.
     for (const container of Array.from(root.querySelectorAll(".mermaid-rendered"))) {
-        container.innerHTML = DOMPurify.sanitize(container.innerHTML, {
-            // Keep the diagram: SVG shapes and filters, the native <text> labels
-            // mermaid renders with (it uses no foreignObject), and the <style> block
-            // that carries its colors. The html profile lets DOMPurify reach INTO any
-            // foreignObject to sanitize it rather than trust it, so a script or
-            // handler in a label is still removed.
-            USE_PROFILES: { svg: true, svgFilters: true, html: true },
-            ADD_TAGS: ["style"],
-        });
+        container.innerHTML = sanitizeDiagramSvg(container.innerHTML);
         // DOMPurify sanitizes markup, not CSS, and the export has no CSP, so close
         // the one channel that still phones home: @import and remote url() in the
         // <style> block and in inline style attributes. mermaid's own url(#marker)
@@ -430,7 +446,9 @@ export function generateHTML(
     font: FontFamily,
     fontSize: FontSize,
     userThemes: readonly ThemeDef[],
-    includeFooter: boolean = true
+    includeFooter: boolean = true,
+    // Extra stylesheet for the content, e.g. KaTeX's (katexExportCss).
+    extraCss: string = ''
 ): string {
     const css = generateExportCSS(theme, font, fontSize, userThemes);
     const safeTitle = escapeHtml(title);
@@ -453,6 +471,7 @@ export function generateHTML(
     <meta name="date" content="${new Date().toISOString()}">
     <title>${safeTitle}</title>
     <style>${css}</style>
+    ${extraCss ? `<style>${extraCss}</style>` : ''}
 </head>
 <body>
     <article>
@@ -476,7 +495,7 @@ export async function exportToHTML(
 ): Promise<boolean> {
     const title = fileName.replace(/\.(md|markdown)$/i, '');
     const cleaned = await prepareExportHtml(htmlContent);
-    const fullHTML = generateHTML(cleaned, title, theme, font, fontSize, userThemes);
+    const fullHTML = generateHTML(cleaned, title, theme, font, fontSize, userThemes, true, await katexExportCss(cleaned));
 
     // Use Tauri save dialog
     const filePath = await save({
@@ -485,7 +504,7 @@ export async function exportToHTML(
     });
 
     if (!filePath) return false;
-    await writeTextFile(filePath, fullHTML);
+    await writeExportFile(filePath, fullHTML);
     return true;
 }
 
@@ -576,7 +595,7 @@ export async function exportToDocx(
         out instanceof Blob ? new Uint8Array(await out.arrayBuffer())
         : out instanceof Uint8Array ? out
         : new Uint8Array(out as ArrayBuffer);
-    await writeFile(filePath, bytes);
+    await writeExportFile(filePath, bytes);
     return true;
 }
 
@@ -730,7 +749,7 @@ export async function exportToPDF(
     // theme (see `_theme` above, deliberately ignored), because a PDF is for printing
     // and paper is white. A built-in id needs no extra definitions to resolve, so the
     // empty list here is a fact rather than the omission that broke the HTML export.
-    const fullHTML = generateHTML(cleaned, title, 'light', font, fontSize, [], true);
+    const fullHTML = generateHTML(cleaned, title, 'light', font, fontSize, [], true, await katexExportCss(cleaned));
 
     const canSaveSilently =
         typeof navigator !== 'undefined' &&

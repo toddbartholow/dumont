@@ -9,12 +9,14 @@ import { describe, it, expect, vi, afterEach } from "vitest";
 import { render, cleanup, waitFor } from "@testing-library/react";
 import { MarkdownPreview } from "./MarkdownPreview";
 import { invoke } from "@tauri-apps/api/core";
+import { extractHeadings } from "../utils/outline";
+import { openUrl, revealItemInDir } from "@tauri-apps/plugin-opener";
 
 vi.mock("@tauri-apps/api/core", () => ({
     invoke: vi.fn(async () => null),
     convertFileSrc: (p: string) => p,
 }));
-vi.mock("@tauri-apps/plugin-opener", () => ({ openUrl: vi.fn(async () => {}) }));
+vi.mock("@tauri-apps/plugin-opener", () => ({ openUrl: vi.fn(async () => {}), revealItemInDir: vi.fn(async () => {}) }));
 
 afterEach(cleanup);
 
@@ -223,5 +225,237 @@ describe("local images", () => {
         await waitFor(() => expect(created).toHaveBeenCalledTimes(2));
 
         expect(container.querySelector("img")?.getAttribute("src")).toBe("blob:1");
+    });
+});
+
+// Slugs used to be ASCII-only, so every CJK or Cyrillic heading became
+// "section", "section-1"... The outline extractor names headings with the same
+// slugger, so its ids must be exactly the ids the preview put in the DOM.
+describe("heading ids", () => {
+    it("slugs non-Latin headings and agrees with the outline's ids", async () => {
+        const md = "# 見出し\n\n# Привет мир\n\n## Setup\n\n## Setup\n\n# Intro {#setup}\n\n```\n# not a heading\n```";
+        const { container } = renderPreview(md);
+        const ids = await waitFor(() => {
+            const hs = Array.from(container.querySelectorAll("h1, h2"));
+            expect(hs.length).toBe(5);
+            return hs.map((h) => h.id);
+        });
+        expect(ids).toEqual(["見出し", "привет-мир", "setup", "setup-1", "setup-2"]);
+        expect(extractHeadings(md).map((h) => h.id)).toEqual(ids);
+    });
+});
+
+describe("wikilinks", () => {
+    it("renders [[links]] in prose but leaves code untouched", async () => {
+        const { container } = renderPreview("See [[Note]].\n\n```js\nconst x = [[1, 2]];\n```\n\nand `[[inline]]`");
+        await waitFor(() => expect(container.querySelector("a[title='Wikilink: Note']")).toBeTruthy());
+        expect(container.querySelector("pre")!.textContent).toContain("const x = [[1, 2]];");
+        expect(container.querySelector("p:last-of-type code")!.textContent).toBe("[[inline]]");
+        expect(container.querySelectorAll("a[title^='Wikilink']").length).toBe(1);
+    });
+});
+
+// The webview is the app window: a link the browser follows replaces Dumont,
+// unsaved document and all. Only http(s)/mailto/anchors/wikilinks/.md links
+// used to be prevented, so `[spec](spec.pdf)` navigated the app away.
+describe("links never navigate the app window", () => {
+    const click = (el: Element, init: MouseEventInit = {}) => {
+        const ev = new MouseEvent("click", { bubbles: true, cancelable: true, ...init });
+        el.dispatchEvent(ev);
+        return ev;
+    };
+    const auxClick = (el: Element) => {
+        const ev = new MouseEvent("auxclick", { bubbles: true, cancelable: true, button: 1 });
+        el.dispatchEvent(ev);
+        return ev;
+    };
+    const firstLink = async (container: HTMLElement) =>
+        waitFor(() => {
+            const a = container.querySelector("a");
+            expect(a).toBeTruthy();
+            return a!;
+        });
+
+    it("reveals a relative file next to the document instead of following it", async () => {
+        vi.mocked(revealItemInDir).mockClear();
+        const { container } = renderPreview("[spec](docs/spec%20v2.pdf#page=3)", { filePath: "/notes/doc.md" });
+        const a = await firstLink(container);
+        expect(a.getAttribute("href")).toBe("docs/spec%20v2.pdf#page=3"); // exports keep the link
+        expect(click(a).defaultPrevented).toBe(true);
+        expect(auxClick(a).defaultPrevented).toBe(true);
+        expect(revealItemInDir).toHaveBeenCalledWith("/notes/docs/spec v2.pdf");
+    });
+
+    it("explains instead of navigating when the document has no folder yet", async () => {
+        const onNotify = vi.fn();
+        vi.mocked(revealItemInDir).mockClear();
+        const { container } = renderPreview("[pic](pic.png)", { onNotify });
+        const a = await firstLink(container);
+        expect(click(a).defaultPrevented).toBe(true);
+        expect(revealItemInDir).not.toHaveBeenCalled();
+        expect(onNotify).toHaveBeenCalledWith(expect.stringMatching(/save the document/i), "info");
+    });
+
+    it("says so when the linked file does not exist", async () => {
+        const onNotify = vi.fn();
+        vi.mocked(revealItemInDir).mockRejectedValueOnce(new Error("not found"));
+        const { container } = renderPreview("[gone](gone.zip)", { filePath: "C:\\notes\\doc.md", onNotify });
+        click(await firstLink(container));
+        await waitFor(() => expect(onNotify).toHaveBeenCalledWith('Could not find "gone.zip"', "error"));
+    });
+
+    it("prevents a relative .md link even without in-app navigation", async () => {
+        const { container } = renderPreview("[other](other.md)", { filePath: "/notes/doc.md" });
+        expect(click(await firstLink(container)).defaultPrevented).toBe(true);
+    });
+
+    it("blocks raw-HTML links with other schemes", async () => {
+        const { container } = renderPreview('<a href="file:///etc/passwd">f</a> <a href="//evil.example/">e</a>', { filePath: "/n/d.md" });
+        await waitFor(() => expect(container.querySelectorAll("a").length).toBe(2));
+        for (const a of Array.from(container.querySelectorAll("a"))) {
+            expect(click(a).defaultPrevented).toBe(true);
+            expect(auxClick(a).defaultPrevented).toBe(true);
+            expect(a.getAttribute("href") ?? "").not.toMatch(/^(file:|\/\/)/);
+        }
+    });
+
+    it("opens external links with the OS, on middle-click too", async () => {
+        vi.mocked(openUrl).mockClear();
+        const { container } = renderPreview("[site](https://example.com)");
+        const a = await firstLink(container);
+        expect(click(a).defaultPrevented).toBe(true);
+        expect(auxClick(a).defaultPrevented).toBe(true);
+        expect(openUrl).toHaveBeenCalledTimes(2);
+    });
+
+    it("blocks middle-click on wikilinks and anchors", async () => {
+        const { container } = renderPreview("[[Note]] and [top](#top)");
+        await waitFor(() => expect(container.querySelectorAll("a").length).toBe(2));
+        for (const a of Array.from(container.querySelectorAll("a"))) {
+            expect(auxClick(a).defaultPrevented).toBe(true);
+        }
+    });
+
+    it("does not leak react-markdown's node prop onto DOM elements", async () => {
+        const { container } = renderPreview("# H\n\n[a](https://x.y) ![i](https://x.y/i.png)\n\n```\ncode\n```\n\n- [ ] task\n\n| a |\n|---|\n| b |");
+        await waitFor(() => expect(container.querySelector("pre")).toBeTruthy());
+        expect(container.querySelector("[node]")).toBeNull();
+    });
+});
+
+describe("image sources", () => {
+    const PNG = "data:image/png;base64,iVBORw0KGgo=";
+
+    it("shows a raster data: image, even in an untitled buffer", async () => {
+        const { container } = renderPreview(`![dot](${PNG})`);
+        await waitFor(() => expect(container.querySelector("img")?.getAttribute("src")).toBe(PNG));
+    });
+
+    it("never displays an SVG or non-image data: URL", async () => {
+        const { container } = renderPreview(
+            "![svg](data:image/svg+xml;base64,PHN2Zz4=)\n\n<img src=\"data:text/html,<b>x</b>\">",
+            { filePath: "/notes/doc.md" },
+        );
+        await waitFor(() => expect(container.textContent).toContain("Failed to load image"));
+        expect(container.querySelector("img")).toBeNull();
+        expect(container.innerHTML).not.toMatch(/data:(image\/svg|text\/html)/);
+    });
+
+    it("shows the error card, not an endless skeleton, when a relative image cannot resolve", async () => {
+        const { container } = renderPreview("![local](pic.png)"); // no filePath: unsaved buffer
+        await waitFor(() => expect(container.textContent).toContain("Failed to load image: pic.png"));
+        expect(container.querySelector(".animate-pulse")).toBeNull();
+    });
+
+    // A <div> inside a <p> is invalid HTML: React warns, and a parser reading an
+    // export closes the paragraph early.
+    it("renders its placeholders as spans inside the paragraph", async () => {
+        vi.mocked(invoke).mockImplementation((() => new Promise(() => {})) as typeof invoke);
+        const { container } = renderPreview("text ![a](never.png) and ![b](../escape.png)", { filePath: "/notes/doc.md" });
+        await waitFor(() => {
+            expect(container.querySelector("p .animate-pulse")).toBeTruthy();
+            expect(container.querySelector("p")!.textContent).toContain("Failed to load image");
+        });
+        expect(container.querySelector("p div")).toBeNull();
+        vi.mocked(invoke).mockImplementation((async () => null) as typeof invoke);
+    });
+});
+
+describe("local image refresh", () => {
+    it("re-reads an image changed on disk when the window regains focus, without a skeleton flash", async () => {
+        let mtime = 100;
+        const reads: string[] = [];
+        let holdReads = false;
+        let release = () => {};
+        vi.mocked(invoke).mockImplementation(((cmd: string, args: { relPath?: string; path?: string }) => {
+            if (cmd === "get_file_info") return Promise.resolve({ modified: mtime });
+            if (cmd === "read_image_file") {
+                reads.push(args.relPath!);
+                if (!holdReads) return Promise.resolve(new ArrayBuffer(4));
+                return new Promise<unknown>((resolve) => { release = () => resolve(new ArrayBuffer(4)); });
+            }
+            return Promise.resolve(null);
+        }) as typeof invoke);
+        let made = 0;
+        const revoked: string[] = [];
+        Object.assign(URL, {
+            createObjectURL: vi.fn(() => `blob:r${++made}`),
+            revokeObjectURL: vi.fn((u: string) => revoked.push(u)),
+        });
+
+        const { container } = renderPreview("![a](refresh-me.png) ![b](refresh-me.png)", { filePath: "/focus/doc.md" });
+        await waitFor(() => {
+            const srcs = Array.from(container.querySelectorAll("img")).map((i) => i.getAttribute("src"));
+            expect(srcs).toEqual(["blob:r1", "blob:r1"]);
+        });
+        expect(reads).toEqual(["refresh-me.png"]); // two references, one read
+
+        // Focus without a change: no re-read.
+        window.dispatchEvent(new Event("focus"));
+        await new Promise((r) => setTimeout(r, 20));
+        expect(reads.length).toBe(1);
+
+        mtime = 200;
+        holdReads = true;
+        window.dispatchEvent(new Event("focus"));
+        await waitFor(() => expect(reads.length).toBe(2));
+        // The old picture stays up while the new one loads.
+        expect(container.querySelector(".animate-pulse")).toBeNull();
+        expect(container.querySelector("img")?.getAttribute("src")).toBe("blob:r1");
+        release();
+        await waitFor(() => {
+            const srcs = Array.from(container.querySelectorAll("img")).map((i) => i.getAttribute("src"));
+            expect(srcs).toEqual(["blob:r2", "blob:r2"]);
+        });
+        expect(reads.length).toBe(2);
+        expect(revoked).toEqual(["blob:r1"]);
+        vi.mocked(invoke).mockImplementation((async () => null) as typeof invoke);
+    });
+});
+
+describe("copying from the reader", () => {
+    it("leaves the heading permalink icon text out of the clipboard", async () => {
+        const { container } = renderPreview("## Installation\n\nRun it.");
+        const h2 = await waitFor(() => {
+            const h = container.querySelector("h2");
+            expect(h).toBeTruthy();
+            return h!;
+        });
+        const sel = window.getSelection()!;
+        sel.removeAllRanges();
+        const range = document.createRange();
+        range.selectNodeContents(container.querySelector(".markdown-body")!);
+        sel.addRange(range);
+
+        const data = new Map<string, string>();
+        const ev = new Event("copy", { bubbles: true, cancelable: true }) as Event & { clipboardData: unknown };
+        ev.clipboardData = { setData: (t: string, v: string) => data.set(t, v) };
+        h2.dispatchEvent(ev);
+
+        expect(ev.defaultPrevented).toBe(true);
+        expect(data.get("text/plain")).not.toMatch(/link/);
+        expect(data.get("text/plain")).toContain("Installation");
+        expect(data.get("text/html")).not.toContain("material-symbols");
+        sel.removeAllRanges();
     });
 });

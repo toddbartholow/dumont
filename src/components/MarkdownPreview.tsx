@@ -10,12 +10,19 @@ import rehypeRaw from "rehype-raw";
 import rehypeSanitize from "rehype-sanitize";
 import { SANITIZE_SCHEMA } from "../utils/sanitizeSchema";
 import { invoke } from "@tauri-apps/api/core";
-import { openUrl } from "@tauri-apps/plugin-opener";
-import { parseFrontmatter, serializeFrontmatter, type FrontmatterValue } from "../utils/frontmatter";
+import { openUrl, revealItemInDir } from "@tauri-apps/plugin-opener";
+import { parseFrontmatter, updateFrontmatter, type FrontmatterValue } from "../utils/frontmatter";
 import { READER_WIDTHS, DEFAULT_READER_WIDTH } from "../utils/readerWidth";
 import type { Scroller } from "../utils/scrollSync";
 import { MermaidBlock } from "./MermaidBlock";
 import { isMermaidLanguage } from "../utils/mermaidLanguage";
+import { slugify, createSlugger } from "../utils/slugify";
+import { rewriteWikilinksOutsideCode } from "../utils/wikilinkRewrite";
+import { classifyHref, relativeLinkPath } from "../utils/previewLinks";
+import { resolveRelativePath } from "../utils/resolveRelativePath";
+import { createLocalImageCache } from "../utils/localImageCache";
+import { isRasterDataImage } from "../utils/imageSources";
+import { writeCleanSelection } from "../utils/previewCopy";
 
 // Detect KaTeX-style math so we only load the heavy katex bundle when needed.
 // $$...$$ for block math, $...$ for inline math (not preceded/followed by digit
@@ -62,8 +69,17 @@ const REMARK_REHYPE_OPTIONS = { handlers: defListHastHandlers } as const;
 // small safe list — which silently kills our internal `wikilink:` links (the
 // click handler keys off that exact scheme). Pass those through; defer
 // everything else to the default, which still blocks javascript:, etc.
-const mdUrlTransform = (url: string): string =>
-    url.startsWith("wikilink:") ? url : defaultUrlTransform(url);
+//
+// It also drops data: URLs, so a base64-embedded image (which many tools
+// write) showed a loading skeleton forever. A RASTER data image on an <img>
+// src is let through; data:image/svg+xml, data: on any other attribute and
+// every other data: type still go to the default and are dropped. The
+// sanitize schema admits `data` for src, and LocalImage checks again.
+const mdUrlTransform = (url: string, key: string, node: { tagName?: string }): string => {
+    if (url.startsWith("wikilink:")) return url;
+    if (key === "src" && node.tagName === "img" && isRasterDataImage(url)) return url;
+    return defaultUrlTransform(url);
+};
 
 // rehype plugin: stamp each top-level rendered block with the source line it came
 // from (data-source-line). Lets the preview report the ACCURATE top-visible line
@@ -97,7 +113,9 @@ function hastText(node: HastTextNode): string {
 }
 function rehypeHeadingIds() {
     return (tree: { children?: HastTextNode[] }) => {
-        const seen = new Map<string, number>();
+        // The same slugger the outline uses (utils/slugify), so an outline
+        // entry's id is the id the preview gives that heading.
+        const slugger = createSlugger();
         const walk = (nodes?: HastTextNode[]) => {
             if (!nodes) return;
             for (const node of nodes) {
@@ -109,16 +127,9 @@ function rehypeHeadingIds() {
                     // suffix repeats so the DOM never carries duplicate ids.
                     // Slugs stay the fallback. SYNTAX-01.
                     const existing = node.properties.id;
-                    if (typeof existing === "string" && existing !== "") {
-                        const count = seen.get(existing) ?? 0;
-                        seen.set(existing, count + 1);
-                        if (count > 0) node.properties.id = `${existing}-${count}`;
-                    } else {
-                        const base = slugify(hastText(node)) || "section";
-                        const count = seen.get(base) ?? 0;
-                        seen.set(base, count + 1);
-                        node.properties.id = count === 0 ? base : `${base}-${count}`;
-                    }
+                    node.properties.id = typeof existing === "string" && existing !== ""
+                        ? slugger.reserve(existing)
+                        : slugger.slug(hastText(node));
                 }
                 walk(node.children);
             }
@@ -184,17 +195,9 @@ interface MarkdownPreviewProps {
     onNavigateRelative?: (href: string) => void;
     /** Reading column tier: "narrow" | "medium" | "wide" | "full". */
     readerWidth?: string;
+    /** Show a toast, e.g. when a link to a file next to the document can't be followed. */
+    onNotify?: (message: string, type: "info" | "error") => void;
 }
-
-/** Slugify heading text into a stable, URL-safe id (GitHub-style). */
-const slugify = (text: string): string =>
-    text
-        .toLowerCase()
-        .trim()
-        .replace(/[^\w\s-]/g, "")
-        .replace(/\s+/g, "-")
-        .replace(/-+/g, "-")
-        .replace(/^-|-$/g, "");
 
 /** Extract the plain-text label from a React node tree (for slug + anchor link). */
 function nodeText(node: React.ReactNode): string {
@@ -218,41 +221,23 @@ const IMAGE_MIME_TYPES: Record<string, string> = {
     'bmp': 'image/bmp'
 };
 
-// Module-level shared cache for local image blobs. Without this, a doc that
-// references the same image 50 times reads the file 50 times and creates 50
-// independent ObjectURLs. With it, repeat references hit memory.
-//
-// LRU eviction at CACHE_CAP entries: the Map preserves insertion order, so we
-// re-insert on hit (move to end) and evict from the front when full. Evicted
-// URLs are revoked so the image data can be GC'd.
-const LOCAL_IMAGE_CACHE = new Map<string, string>();
-const LOCAL_IMAGE_CACHE_CAP = 100;
-
-async function getCachedLocalImageUrl(baseDir: string, relPath: string, mimeType: string): Promise<string> {
-    const cacheKey = `${baseDir}\u0000${relPath}`;
-    const hit = LOCAL_IMAGE_CACHE.get(cacheKey);
-    if (hit !== undefined) {
-        // Move-to-end so this entry is now most-recently-used.
-        LOCAL_IMAGE_CACHE.delete(cacheKey);
-        LOCAL_IMAGE_CACHE.set(cacheKey, hit);
-        return hit;
-    }
-    // Read via the validated Rust command (containment + symlink-safe) instead of
-    // the broad plugin-fs readFile. Returns an ArrayBuffer (tauri::ipc::Response).
-    const buf = await invoke<ArrayBuffer>("read_image_file", { baseDir, relPath });
-    const blob = new Blob([buf], { type: mimeType });
-    const url = URL.createObjectURL(blob);
-    LOCAL_IMAGE_CACHE.set(cacheKey, url);
-    if (LOCAL_IMAGE_CACHE.size > LOCAL_IMAGE_CACHE_CAP) {
-        const oldestKey = LOCAL_IMAGE_CACHE.keys().next().value;
-        if (oldestKey !== undefined) {
-            const oldUrl = LOCAL_IMAGE_CACHE.get(oldestKey);
-            if (oldUrl) URL.revokeObjectURL(oldUrl);
-            LOCAL_IMAGE_CACHE.delete(oldestKey);
-        }
-    }
-    return url;
-}
+// Module-level shared cache for local image blobs, revalidated by mtime so an
+// image rewritten on disk shows its new version, with concurrent references
+// sharing one read. See utils/localImageCache.
+const getCachedLocalImageUrl = createLocalImageCache({
+    stat: (path) =>
+        invoke<{ modified?: number } | null>("get_file_info", { path }).then(
+            (info) => info?.modified ?? null,
+            () => null,
+        ),
+    // Read via the validated Rust command (containment + symlink-safe) instead
+    // of the broad plugin-fs readFile. Returns an ArrayBuffer
+    // (tauri::ipc::Response).
+    read: (baseDir, relPath) => invoke<ArrayBuffer>("read_image_file", { baseDir, relPath }),
+    // Resolved at call time, not captured: tests swap these out.
+    createUrl: (blob) => URL.createObjectURL(blob),
+    revokeUrl: (url) => URL.revokeObjectURL(url),
+});
 
 /**
  * Reject paths that would escape the markdown file's directory or name an
@@ -275,13 +260,58 @@ function LocalImage({ src, alt, baseDir, ...props }: { src: string; alt: string;
     const [imageSrc, setImageSrc] = useState<string>('');
     const [error, setError] = useState(false);
 
+    // Bumped on window focus so a local image re-checks its file (an edited
+    // screenshot, a regenerated diagram), matching the document's own
+    // focus-time external-change check.
+    const [refreshTick, setRefreshTick] = useState(0);
     useEffect(() => {
-        if (!baseDir || !src) return;
+        const onFocus = () => setRefreshTick((n) => n + 1);
+        window.addEventListener("focus", onFocus);
+        return () => window.removeEventListener("focus", onFocus);
+    }, []);
 
-        // External URLs and data: URIs go straight to the <img>.
-        if (src.includes('://') || src.startsWith('data:')) {
+    // Only a different image (or base folder) clears what is shown; a refresh
+    // keeps the current picture up until the re-checked one is ready, so a
+    // focus does not flash every image back to its loading skeleton.
+    const shownKeyRef = useRef<string | null>(null);
+    // One automatic retry when a cached object URL fails to load: it may have
+    // been revoked (replaced after a change on disk, or evicted) before this
+    // lazy <img> got around to loading it.
+    const retriedRef = useRef(false);
+
+    useEffect(() => {
+        const shownKey = `${baseDir}\u0000${src}`;
+        if (shownKeyRef.current !== shownKey) {
+            shownKeyRef.current = shownKey;
+            retriedRef.current = false;
+            setImageSrc('');
+            setError(false);
+        }
+
+        // Nothing to load (an empty src, or one the URL transform dropped as
+        // unsafe): say so instead of showing a loading skeleton forever.
+        if (!src) {
+            setError(true);
+            return;
+        }
+
+        // Remote URLs and raster data: images go straight to the <img>. They
+        // need no document folder, so they load in an untitled buffer too.
+        if (src.includes('://') || isRasterDataImage(src)) {
             setImageSrc(src);
             setError(false);
+            return;
+        }
+        // Any other data: URL (SVG, HTML) is never displayed.
+        if (/^data:/i.test(src)) {
+            setError(true);
+            return;
+        }
+
+        // A relative path with no document folder (an unsaved buffer) can
+        // never resolve.
+        if (!baseDir) {
+            setError(true);
             return;
         }
 
@@ -314,28 +344,32 @@ function LocalImage({ src, alt, baseDir, ...props }: { src: string; alt: string;
 
         return () => {
             cancelled = true;
-            // Don't revoke the URL — the cache owns it. Cache eviction handles
-            // revocation when the entry is pushed out by LRU pressure.
+            // Don't revoke the URL: the cache owns it. It revokes a URL when
+            // the file changes on disk or LRU pressure evicts the entry.
         };
-    }, [src, baseDir]);
+    }, [src, baseDir, refreshTick]);
 
+    // Placeholders are <span className="block">, not <div>: an image sits
+    // inside a <p>, and a <div> there is invalid HTML (React warns, and an
+    // HTML parser reading an export closes the paragraph early).
     if (error) {
+        const label = !src ? "(no source)" : /^data:/i.test(src) ? "embedded image" : src;
         return (
-            <div className="my-4 p-4 border border-[var(--border-subtle)] rounded-lg bg-[var(--bg-secondary)] text-[var(--text-secondary)] text-sm">
-                Failed to load image: {src}
-            </div>
+            <span className="block my-4 p-4 border border-[var(--border-subtle)] rounded-lg bg-[var(--bg-secondary)] text-[var(--text-secondary)] text-sm">
+                Failed to load image: {label}
+            </span>
         );
     }
 
     if (!imageSrc) {
         return (
-            <div className="my-4 p-4 border border-[var(--border-subtle)] rounded-lg bg-[var(--bg-secondary)] animate-pulse">
+            <span className="block my-4 p-4 border border-[var(--border-subtle)] rounded-lg bg-[var(--bg-secondary)] animate-pulse">
                 {/* --bg-hover, not --bg-tertiary: the latter is not a theme token. No
                     theme defines it, nothing writes it onto <html>, and this codebase
                     never uses the var(--x, fallback) form, so it resolved to nothing
                     and this loading bar was invisible on every theme. */}
-                <div className="h-32 bg-[var(--bg-hover)] rounded"></div>
-            </div>
+                <span className="block h-32 bg-[var(--bg-hover)] rounded"></span>
+            </span>
         );
     }
 
@@ -345,6 +379,14 @@ function LocalImage({ src, alt, baseDir, ...props }: { src: string; alt: string;
             alt={alt || 'image'}
             {...props}
             loading="lazy"
+            onError={() => {
+                if (imageSrc.startsWith("blob:") && !retriedRef.current) {
+                    retriedRef.current = true;
+                    setRefreshTick((n) => n + 1);
+                    return;
+                }
+                setError(true);
+            }}
             className="max-w-full h-auto rounded-lg my-4 cursor-zoom-in transition-transform hover:scale-[1.01]"
             onClick={() => {
                 const evt = new CustomEvent("dumont:zoom", { detail: { src: imageSrc, alt } });
@@ -617,13 +659,18 @@ function HeadingWithAnchor(
 // Stable, stateless renderers hoisted to module scope so their identity never
 // changes across renders — react-markdown then won't remount these node types
 // when the components map is rebuilt (e.g. on file change). PREVIEW-06.
-const PreRenderer = (props: React.HTMLAttributes<HTMLPreElement>) => <CodeBlock {...props} />;
-const H1Renderer = (props: React.HTMLAttributes<HTMLHeadingElement>) => <HeadingWithAnchor level={1} {...props} />;
-const H2Renderer = (props: React.HTMLAttributes<HTMLHeadingElement>) => <HeadingWithAnchor level={2} {...props} />;
-const H3Renderer = (props: React.HTMLAttributes<HTMLHeadingElement>) => <HeadingWithAnchor level={3} {...props} />;
-const H4Renderer = (props: React.HTMLAttributes<HTMLHeadingElement>) => <HeadingWithAnchor level={4} {...props} />;
-const H5Renderer = (props: React.HTMLAttributes<HTMLHeadingElement>) => <HeadingWithAnchor level={5} {...props} />;
-const H6Renderer = (props: React.HTMLAttributes<HTMLHeadingElement>) => <HeadingWithAnchor level={6} {...props} />;
+//
+// react-markdown hands every component its hast `node`. Spread onto a DOM
+// element it became node="[object Object]" on headings, images and code
+// blocks, in the app and in every export, so each renderer drops it.
+type WithNode<P> = P & { node?: unknown };
+const PreRenderer = ({ node: _node, ...props }: WithNode<React.HTMLAttributes<HTMLPreElement>>) => <CodeBlock {...props} />;
+const H1Renderer = ({ node: _node, ...props }: WithNode<React.HTMLAttributes<HTMLHeadingElement>>) => <HeadingWithAnchor level={1} {...props} />;
+const H2Renderer = ({ node: _node, ...props }: WithNode<React.HTMLAttributes<HTMLHeadingElement>>) => <HeadingWithAnchor level={2} {...props} />;
+const H3Renderer = ({ node: _node, ...props }: WithNode<React.HTMLAttributes<HTMLHeadingElement>>) => <HeadingWithAnchor level={3} {...props} />;
+const H4Renderer = ({ node: _node, ...props }: WithNode<React.HTMLAttributes<HTMLHeadingElement>>) => <HeadingWithAnchor level={4} {...props} />;
+const H5Renderer = ({ node: _node, ...props }: WithNode<React.HTMLAttributes<HTMLHeadingElement>>) => <HeadingWithAnchor level={5} {...props} />;
+const H6Renderer = ({ node: _node, ...props }: WithNode<React.HTMLAttributes<HTMLHeadingElement>>) => <HeadingWithAnchor level={6} {...props} />;
 
 function MarkdownPreviewImpl({
     content,
@@ -636,8 +683,12 @@ function MarkdownPreviewImpl({
     onWikilinkClick,
     onNavigateRelative,
     readerWidth,
+    onNotify,
 }: MarkdownPreviewProps) {
     const mainRef = useRef<HTMLElement>(null);
+    // Through a ref so a new callback identity never rebuilds the components map.
+    const onNotifyRef = useRef(onNotify);
+    onNotifyRef.current = onNotify;
     const readerVars = READER_WIDTHS[readerWidth ?? DEFAULT_READER_WIDTH] ?? READER_WIDTHS[DEFAULT_READER_WIDTH];
     const [zoomImage, setZoomImage] = useState<{ src: string; alt: string } | null>(null);
 
@@ -702,17 +753,29 @@ function MarkdownPreviewImpl({
     }, [onContentChange]);
 
     const components = useMemo(() => ({
-        img: ({ src, alt, ...props }: React.ImgHTMLAttributes<HTMLImageElement>) => (
+        img: ({ src, alt, node: _node, ...props }: WithNode<React.ImgHTMLAttributes<HTMLImageElement>>) => (
             <LocalImage src={src || ''} alt={alt || 'image'} baseDir={baseDir} {...props} />
         ),
-        a: ({ href, children, ...rest }: React.AnchorHTMLAttributes<HTMLAnchorElement>) => {
+        a: ({ href, children, node: _node, ...rest }: React.AnchorHTMLAttributes<HTMLAnchorElement> & { node?: unknown }) => {
+            // Every branch below prevents the default action, the middle-click
+            // one included: the webview is the app window, so a link the
+            // browser follows navigates Dumont itself away, unsaved document
+            // and all. See utils/previewLinks.
+            const kind = classifyHref(href);
+            const blockAux = (e: React.MouseEvent) => e.preventDefault();
             // Wikilink: open same-folder file via callback
-            if (href && href.startsWith("wikilink:")) {
-                const target = decodeURIComponent(href.slice("wikilink:".length));
+            if (kind === "wikilink" && href) {
+                let target: string;
+                try { target = decodeURIComponent(href.slice("wikilink:".length)); }
+                catch { target = href.slice("wikilink:".length); }
                 return (
                     <a
                         {...rest}
                         href="#"
+                        // Exports turn wikilinks into plain text; they find
+                        // them by this attribute, since the href is just "#".
+                        data-wikilink={target}
+                        onAuxClick={blockAux}
                         onClick={(e) => {
                             e.preventDefault();
                             onWikilinkClick?.(target);
@@ -728,14 +791,17 @@ function MarkdownPreviewImpl({
             // play well with native hash navigation, so we scroll explicitly.
             // Falls back to a fuzzy heading-text match when the slug doesn't
             // exactly match an existing id (different markdown anchor styles).
-            if (href && href.startsWith("#")) {
+            if (kind === "anchor" && href) {
                 return (
                     <a
                         {...rest}
                         href={href}
+                        onAuxClick={blockAux}
                         onClick={(e) => {
                             e.preventDefault();
-                            const id = decodeURIComponent(href.slice(1));
+                            let id: string;
+                            try { id = decodeURIComponent(href.slice(1)); }
+                            catch { id = href.slice(1); }
                             let el: HTMLElement | null = document.getElementById(id);
                             if (!el) {
                                 // Fuzzy fallback: find a heading whose textContent
@@ -763,12 +829,7 @@ function MarkdownPreviewImpl({
             // `[y](sub/note.md)`, `[z](../other.md)` — open in-app like wikilinks
             // instead of doing nothing. Only .md/.markdown (optionally with a
             // #fragment) are claimed so other relative links fall through. NAV-05.
-            if (
-                href &&
-                onNavigateRelative &&
-                !/^(https?:|mailto:|data:|wikilink:|#)/i.test(href) &&
-                /\.(md|markdown)(#.*)?$/i.test(href)
-            ) {
+            if (kind === "relative-md" && href && onNavigateRelative) {
                 const targetHref = href;
                 return (
                     <a
@@ -786,7 +847,7 @@ function MarkdownPreviewImpl({
                         // onClick never sees middle-click; with a real href the
                         // webview would otherwise get a new-window request for
                         // tauri.localhost/<file>.md.
-                        onAuxClick={(e) => e.preventDefault()}
+                        onAuxClick={blockAux}
                     >
                         {children}
                     </a>
@@ -794,20 +855,57 @@ function MarkdownPreviewImpl({
             }
             // External http(s) and mailto links — route through the OS default
             // handler so the webview itself doesn't navigate away from the app.
-            const isExternal = !!href && /^(https?:|mailto:)/i.test(href);
+            // Middle-click opens them the same way.
+            if (kind === "external" && href) {
+                const openExternal = () => {
+                    openUrl(href).catch((err) =>
+                        console.error("Failed to open external URL:", err)
+                    );
+                };
+                return (
+                    <a
+                        href={href}
+                        {...rest}
+                        rel="noopener noreferrer"
+                        target="_blank"
+                        onClick={(e) => {
+                            e.preventDefault();
+                            openExternal();
+                        }}
+                        onAuxClick={(e) => {
+                            e.preventDefault();
+                            if (e.button === 1) openExternal();
+                        }}
+                    >
+                        {children}
+                    </a>
+                );
+            }
+            // A relative link to some other file next to the document (a PDF,
+            // an image, a .md link when there is no in-app navigation), or
+            // anything blocked. Relative files are REVEALED in the file
+            // manager rather than opened: opening would launch whatever a
+            // downloaded .md points at, an .exe or a script included. The real
+            // href stays in the DOM so exported HTML keeps a working link.
+            const isFile = (kind === "relative-file" || kind === "relative-md") && !!href;
             return (
                 <a
-                    href={href}
+                    href={isFile ? href : undefined}
                     {...rest}
-                    {...(isExternal
-                        ? { rel: "noopener noreferrer", target: "_blank" }
-                        : {})}
+                    onAuxClick={blockAux}
                     onClick={(e) => {
-                        if (!isExternal || !href) return;
                         e.preventDefault();
-                        openUrl(href).catch((err) =>
-                            console.error("Failed to open external URL:", err)
-                        );
+                        if (!isFile || !href) return;
+                        const notify = onNotifyRef.current;
+                        const resolved = filePath ? resolveRelativePath(filePath, relativeLinkPath(href)) : null;
+                        if (!resolved) {
+                            notify?.("Save the document to follow links to files next to it", "info");
+                            return;
+                        }
+                        revealItemInDir(resolved).catch(() => {
+                            const name = resolved.replace(/\\/g, "/").split("/").pop() || resolved;
+                            notify?.(`Could not find "${name}"`, "error");
+                        });
                     }}
                 >
                     {children}
@@ -849,11 +947,11 @@ function MarkdownPreviewImpl({
         // Earlier designs used render-order counters; both the count-on-click and
         // the capture-on-render variants mis-addressed tasks once React re-ran the
         // renderers out of lockstep with the component body (PREVIEW-07).
-        input: ({ type, checked, ...rest }: React.InputHTMLAttributes<HTMLInputElement>) => {
+        input: ({ type, checked, node: _node, ...rest }: WithNode<React.InputHTMLAttributes<HTMLInputElement>>) => {
             if (type !== "checkbox") return <input type={type} checked={checked} {...rest} />;
             return <InteractiveTaskCheckbox initialChecked={!!checked} onToggle={handleTaskToggle} />;
         },
-    }), [baseDir, handleTaskToggle, onWikilinkClick, onNavigateRelative]);
+    }), [baseDir, filePath, handleTaskToggle, onWikilinkClick, onNavigateRelative]);
 
     // Parse YAML frontmatter once per content change. We render it as a
     // metadata card and pass the *body* (without the --- block) to react-markdown
@@ -877,13 +975,8 @@ function MarkdownPreviewImpl({
     // We use a custom href scheme so the link click handler can detect them
     // and load the target file, while keeping the source markdown portable
     // (the source still has [[Foo]] — only the rendered output uses the scheme).
-    const renderBody = useMemo(() => {
-        return parsedBody.replace(/\[\[([^\]|]+?)(?:\|([^\]]+))?\]\]/g, (_m, target: string, alias?: string) => {
-            const t = target.trim();
-            const a = (alias ?? target).trim();
-            return `[${a}](wikilink:${encodeURIComponent(t)})`;
-        });
-    }, [parsedBody]);
+    // Code and math are skipped, so `[[1, 2]]` in a code block stays code.
+    const renderBody = useMemo(() => rewriteWikilinksOutsideCode(parsedBody), [parsedBody]);
 
     // Lazy-load KaTeX only when the document actually contains math.
     // Heavy (~280kb) — keeping it out of the initial bundle is a real win.
@@ -1027,6 +1120,14 @@ function MarkdownPreviewImpl({
         return () => window.removeEventListener("dumont:scroll-top", toTop);
     }, []);
 
+    // Write a cleaned copy of the selection: the icon ligatures and button
+    // labels inside headings and code blocks are UI, not document text.
+    const handleCopy = useCallback((e: React.ClipboardEvent<HTMLDivElement>) => {
+        if (writeCleanSelection(window.getSelection(), e.currentTarget, e.clipboardData)) {
+            e.preventDefault();
+        }
+    }, []);
+
     // Register imperative scroller for split-view sync
     useEffect(() => {
         if (!registerScroller) return;
@@ -1061,12 +1162,18 @@ function MarkdownPreviewImpl({
                                 editable={!!onContentChange}
                                 onChange={(next) => {
                                     if (!onContentChange) return;
-                                    onContentChange(serializeFrontmatter(next, parsedBody));
+                                    onContentChange(updateFrontmatter(content, next));
                                 }}
                             />
                         </div>
                     )}
-                    <div className="markdown-body" ref={markdownBodyRef}>
+                    <div
+                        className="markdown-body"
+                        ref={markdownBodyRef}
+                        // Copy without the heading permalink icon and code-block
+                        // button text (utils/previewCopy).
+                        onCopy={handleCopy}
+                    >
                         <Markdown
                             // eslint-disable-next-line @typescript-eslint/no-explicit-any
                             remarkPlugins={remarkPlugins as any}

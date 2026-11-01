@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, useCallback } from "react";
-import { findAll, matchLength, replaceOne, replaceAllMatches, isValidPattern } from "../utils/findReplace";
+import { findAll, matchLength, replaceNext, replaceAllMatches, isValidPattern } from "../utils/findReplace";
 
 interface FindReplaceBarProps {
     isOpen: boolean;
@@ -157,16 +157,30 @@ export function FindReplaceBar({
         });
     }, []);
 
+    // Both replace actions search `content` as it is now. `match` is refreshed on a
+    // 100 ms debounce, so it can lag the text: a second Replace inside that window
+    // used to splice at the first press's offsets, which by then pointed into the
+    // replacement, and an edit typed just before pressing Replace did the same.
+    // The active match's offset is only a hint for WHICH match to take.
     const replaceCurrent = useCallback(() => {
         if (match.activeIdx === -1) return;
-        const res = replaceOne(content, match.matches[match.activeIdx], query, replacement, caseSensitive, regex);
-        if (res) onReplace(res.content, res.cursor);
+        const res = replaceNext(content, match.matches[match.activeIdx], query, replacement, caseSensitive, regex);
+        if (!res) return;
+        // Re-search the new text right away and make the next match after the
+        // replacement active, rather than waiting for the debounce. Starting after
+        // the replacement matters when it contains the query ("cat" -> "cats"):
+        // otherwise the next press would replace the same spot again.
+        const fresh = findAll(res.content, query, caseSensitive, regex);
+        let active = fresh.findIndex((pos) => pos >= res.cursor);
+        if (active === -1 && fresh.length > 0) active = 0;
+        setMatch({ matches: fresh, activeIdx: active });
+        onReplace(res.content, res.cursor);
     }, [match, content, query, replacement, caseSensitive, regex, onReplace]);
 
     const replaceAll = useCallback(() => {
-        const res = replaceAllMatches(content, match.matches, query, replacement, caseSensitive, regex);
+        const res = replaceAllMatches(content, query, replacement, caseSensitive, regex);
         if (res) onReplace(res.content, res.cursor);
-    }, [match, content, query, replacement, caseSensitive, regex, onReplace]);
+    }, [content, query, replacement, caseSensitive, regex, onReplace]);
 
     const handleKey = (e: React.KeyboardEvent) => {
         if (e.key === "Escape") {

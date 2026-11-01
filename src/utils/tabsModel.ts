@@ -110,9 +110,29 @@ export function nextUntitledName(tabs: TabState[]): string {
  * An existing untitled buffer that is empty and pristine (no path, no content) —
  * worth reusing on "New file" instead of stacking another identical blank tab.
  * TABS-08.
+ *
+ * Judged from the snapshots, so the caller must snapshot the active tab first: its entry
+ * lags the live buffer, and an Untitled tab the user has typed into still reads empty
+ * there until the next switch. TABS-17.
  */
 export function findReusableUntitledTab(tabs: TabState[]): TabState | undefined {
   return tabs.find((t) => t.filePath === null && t.content === "" && t.originalContent === "");
+}
+
+/**
+ * The tab list once a session restore finishes: the restored tabs, then every tab that
+ * already exists. BOOT-01.
+ *
+ * The restore reads its files asynchronously, and that can take seconds (many tabs, big
+ * files, cloud placeholders). Anything the user opens in that window (Ctrl+N and typing, a
+ * dropped file, a second double-clicked .md) already has a tab by the time the restore
+ * commits, and the restore used to replace the list outright, discarding that tab and
+ * whatever was typed into it. A restored file that is already open is dropped in favor of
+ * the open tab, which may carry edits the restored copy does not.
+ */
+export function mergeRestoredTabs(restored: TabState[], current: TabState[]): TabState[] {
+  const fresh = restored.filter((t) => t.filePath === null || !findTabByPath(current, t.filePath));
+  return [...fresh, ...current];
 }
 
 /** Folder segments of a path in natural (root → parent) order. `a/b/c/x.md` →

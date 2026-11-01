@@ -114,31 +114,47 @@ enum Eol {
     Crlf,
 }
 
-/// Detect a file's dominant line ending by reading just its first chunk and
-/// inspecting the first newline. `\r\n` → Crlf, a bare `\n` → Lf, and a file with
-/// no newline at all (or that can't be read) falls back to Lf. Cheap: we never
-/// read more than the first 64 KB regardless of file size. EOL-01.
-async fn detect_file_eol(path: &str) -> Eol {
+/// The UTF-8 byte order mark. Some Windows tools (Notepad before 2019, many
+/// exporters) start every file with it. ENC-01.
+const BOM: char = '\u{FEFF}';
+
+/// The on-disk conventions a save must keep: the line ending, and whether the
+/// file starts with a UTF-8 BOM.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct FileFormat {
+    eol: Eol,
+    bom: bool,
+}
+
+/// Detect a file's conventions by reading just its first chunk. The line ending
+/// comes from the first newline: `\r\n` → Crlf, a bare `\n` → Lf, and a file with
+/// no newline at all (or that can't be read) falls back to Lf. The BOM is the
+/// first three bytes. Cheap: we never read more than the first 64 KB regardless
+/// of file size. EOL-01, ENC-01.
+async fn detect_file_format(path: &str) -> FileFormat {
     use tokio::io::AsyncReadExt;
+    let plain = FileFormat { eol: Eol::Lf, bom: false };
     let mut file = match tokio::fs::File::open(path).await {
         Ok(f) => f,
-        Err(_) => return Eol::Lf,
+        Err(_) => return plain,
     };
     let mut buf = vec![0u8; 64 * 1024];
     let n = match file.read(&mut buf).await {
         Ok(n) => n,
-        Err(_) => return Eol::Lf,
+        Err(_) => return plain,
     };
-    for i in 0..n {
-        if buf[i] == b'\n' {
-            return if i > 0 && buf[i - 1] == b'\r' {
-                Eol::Crlf
-            } else {
-                Eol::Lf
-            };
-        }
-    }
-    Eol::Lf
+    format_of(&buf[..n])
+}
+
+/// The conventions of a file whose first bytes are `head`. Split out of
+/// `detect_file_format` so the tests can feed it bytes directly.
+fn format_of(head: &[u8]) -> FileFormat {
+    let bom = head.starts_with("\u{FEFF}".as_bytes());
+    let eol = match head.iter().position(|&b| b == b'\n') {
+        Some(i) if i > 0 && head[i - 1] == b'\r' => Eol::Crlf,
+        _ => Eol::Lf,
+    };
+    FileFormat { eol, bom }
 }
 
 /// Re-apply a file's line ending to editor content (which CodeMirror always
@@ -223,7 +239,12 @@ pub async fn read_file(path: String) -> Result<FileData, CommandError> {
     // doc-sync "change" the text and mark a freshly opened file dirty. The
     // on-disk convention is not lost: `save_file` re-detects it from the file
     // itself and writes CRLF back. EOL-01.
-    let content = apply_eol(&raw, Eol::Lf);
+    //
+    // The BOM goes the same way, for a worse reason than a dirty flag: left in,
+    // it is an invisible first character, so the frontmatter regex (anchored at
+    // `^---`) no longer matches and the YAML renders as body text. `save_file`
+    // puts it back when the file on disk had one. ENC-01.
+    let content = apply_eol(raw.strip_prefix(BOM).unwrap_or(&raw), Eol::Lf);
 
     let name = file_path
         .file_name()
@@ -312,9 +333,19 @@ async fn write_document(path: &str, target: &Path, content: String) -> Result<u6
     // saving a Windows file doesn't rewrite every line and produce a noisy diff.
     // A brand-new file (save-as / new note) has no existing EOL, so we keep the
     // editor's LF. EOL-01.
+    //
+    // A UTF-8 BOM is restored the same way: `read_file` strips it, and a file
+    // that had one keeps it, so a tool that relies on it still reads the file
+    // as UTF-8. A new file gets none. ENC-01.
     let file_exists = target.exists();
     let content = if file_exists {
-        apply_eol(&content, detect_file_eol(path).await)
+        let format = detect_file_format(path).await;
+        let content = apply_eol(&content, format.eol);
+        if format.bom && !content.starts_with(BOM) {
+            format!("{BOM}{content}")
+        } else {
+            content
+        }
     } else {
         content
     };
@@ -385,6 +416,100 @@ async fn write_document(path: &str, target: &Path, content: String) -> Result<u6
         .await
         .map_err(|e| CommandError::ReadError(e.to_string()))?;
     Ok(mtime_ms(&metadata))
+}
+
+/// Upper bound on one export write. An HTML export with inlined images, or an
+/// image-heavy DOCX, can legitimately run to tens of MB, so this sits far above
+/// the document limit. It exists so a bug cannot turn the export path into an
+/// unbounded disk fill.
+const MAX_EXPORT_BYTES: usize = 512 * 1024 * 1024;
+
+/// The request header that carries the export's destination path,
+/// percent-encoded (`encodeURIComponent`), because a header value must be
+/// visible ASCII and a path can be anything the user typed in the save dialog.
+const EXPORT_PATH_HEADER: &str = "x-export-path";
+
+/// Write an export (standalone HTML, or DOCX bytes) to the path the user picked
+/// in a save dialog. The body is the raw file contents; the path rides in the
+/// `x-export-path` header. Raw bytes rather than a JSON argument because a
+/// `Vec<u8>` argument arrives as a JSON array of numbers, about four times the
+/// size of the file, and an export with inlined images is not small.
+///
+/// This replaces the fs plugin, which the webview held with a `**` scope:
+/// `fs:default` plus that scope let any script in the webview read, list and
+/// stat every file the user can, and the two write grants let it overwrite any
+/// of them. What is left is this single create-or-overwrite of one file.
+///
+/// The write is atomic in the same way as `save_file`: a temp file beside the
+/// target, fsync, then rename, so a crash mid-export leaves the previous file
+/// (or none) rather than a truncated one.
+#[tauri::command]
+pub async fn write_export_file(request: tauri::ipc::Request<'_>) -> Result<(), CommandError> {
+    let path = export_path_from_headers(request.headers())?;
+    match request.body() {
+        tauri::ipc::InvokeBody::Raw(bytes) => write_export(&path, bytes).await,
+        // The IPC falls back to postMessage when its custom protocol is
+        // unavailable, and a Uint8Array then arrives as a JSON array of numbers.
+        tauri::ipc::InvokeBody::Json(value) => {
+            let bytes: Vec<u8> = serde_json::from_value(value.clone()).map_err(|_| {
+                CommandError::WriteError("Export contents must be raw bytes".to_string())
+            })?;
+            write_export(&path, &bytes).await
+        }
+    }
+}
+
+/// The destination path out of the request headers (see `EXPORT_PATH_HEADER`).
+fn export_path_from_headers(headers: &tauri::http::HeaderMap) -> Result<PathBuf, CommandError> {
+    let missing = || CommandError::WriteError("Export path is missing".to_string());
+    let raw = headers
+        .get(EXPORT_PATH_HEADER)
+        .ok_or_else(missing)?
+        .to_str()
+        .map_err(|_| missing())?;
+    let path = percent_encoding::percent_decode_str(raw)
+        .decode_utf8()
+        .map_err(|_| CommandError::WriteError("Export path is not valid UTF-8".to_string()))?;
+    // A dialog never produces an empty path or one with a NUL in it.
+    if path.is_empty() || path.contains('\0') {
+        return Err(CommandError::WriteError("Export path is invalid".to_string()));
+    }
+    Ok(PathBuf::from(path.as_ref()))
+}
+
+/// The body of `write_export_file`, free of the IPC types so the tests can call it.
+async fn write_export(target: &Path, bytes: &[u8]) -> Result<(), CommandError> {
+    if bytes.len() > MAX_EXPORT_BYTES {
+        return Err(CommandError::TooLarge(format!(
+            "Export is {} MB; maximum is {} MB",
+            bytes.len() / (1024 * 1024),
+            MAX_EXPORT_BYTES / (1024 * 1024),
+        )));
+    }
+
+    // Unique per call, for the reason given in `write_document`.
+    let mut tmp = target.as_os_str().to_owned();
+    tmp.push(format!(
+        ".{}.{}.dumont-tmp",
+        std::process::id(),
+        SAVE_SEQ.fetch_add(1, Ordering::Relaxed)
+    ));
+    let tmp = PathBuf::from(tmp);
+
+    let written = async {
+        use tokio::io::AsyncWriteExt;
+        let mut f = tokio::fs::File::create(&tmp).await?;
+        f.write_all(bytes).await?;
+        f.sync_all().await?;
+        drop(f);
+        tokio::fs::rename(&tmp, target).await
+    }
+    .await;
+    if let Err(e) = written {
+        let _ = tokio::fs::remove_file(&tmp).await;
+        return Err(CommandError::WriteError(e.to_string()));
+    }
+    Ok(())
 }
 
 /// Get just the file info without content (for status bar)
@@ -1142,7 +1267,8 @@ mod tests {
     use super::{
         apply_eol, find_backlinks, is_markdown_path, key_from_password, read_file, read_key_entry, sanitize_image_name,
         mtime_ms, save_file, save_lock, save_target, scan_backlinks, search_markdown_tree, validate_rel_path,
-        wikilinks_in_line, BacklinkResult, CommandError, Eol, SAVE_LOCKS,
+        wikilinks_in_line, format_of, export_path_from_headers, write_export, BacklinkResult, CommandError, Eol,
+        FileFormat, EXPORT_PATH_HEADER, SAVE_LOCKS,
     };
     use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -1285,6 +1411,158 @@ mod tests {
             let lf_path = dir.join("new.md").to_string_lossy().to_string();
             save_file(lf_path.clone(), "a\nb".into(), None).await.unwrap();
             assert_eq!(std::fs::read_to_string(&lf_path).unwrap(), "a\nb");
+
+            std::fs::remove_dir_all(&dir).ok();
+        });
+    }
+
+    #[test]
+    fn format_of_detects_the_bom_and_the_line_ending() {
+        let f = |eol, bom| FileFormat { eol, bom };
+        assert_eq!(format_of(b"a\nb"), f(Eol::Lf, false));
+        assert_eq!(format_of(b"a\r\nb"), f(Eol::Crlf, false));
+        assert_eq!(format_of(b"\xEF\xBB\xBF---\r\ntitle: x\r\n"), f(Eol::Crlf, true));
+        assert_eq!(format_of(b"\xEF\xBB\xBF"), f(Eol::Lf, true));
+        assert_eq!(format_of(b""), f(Eol::Lf, false));
+        // Only a BOM at the very start counts.
+        assert_eq!(format_of(b"x\xEF\xBB\xBF"), f(Eol::Lf, false));
+    }
+
+    #[test]
+    fn read_file_strips_the_bom_so_frontmatter_starts_the_text() {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        rt.block_on(async {
+            let dir = std::env::temp_dir().join(format!("dumont-read-bom-{}", std::process::id()));
+            std::fs::create_dir_all(&dir).unwrap();
+            let path = dir.join("bom.md").to_string_lossy().to_string();
+
+            std::fs::write(&path, "\u{FEFF}---\r\ntitle: x\r\n---\r\nbody\r\n").unwrap();
+            let fd = read_file(path).await.unwrap();
+            assert_eq!(fd.content, "---\ntitle: x\n---\nbody\n");
+
+            std::fs::remove_dir_all(&dir).ok();
+        });
+    }
+
+    #[test]
+    fn save_file_restores_the_bom_only_where_there_was_one() {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        rt.block_on(async {
+            let dir = std::env::temp_dir().join(format!("dumont-save-bom-{}", std::process::id()));
+            std::fs::create_dir_all(&dir).unwrap();
+
+            // A BOM + CRLF file round-trips through read and save byte for byte.
+            let bom_path = dir.join("bom.md").to_string_lossy().to_string();
+            let original = "\u{FEFF}---\r\ntitle: x\r\n---\r\nbody\r\n";
+            std::fs::write(&bom_path, original).unwrap();
+            let fd = read_file(bom_path.clone()).await.unwrap();
+            save_file(bom_path.clone(), fd.content, None).await.unwrap();
+            assert_eq!(std::fs::read_to_string(&bom_path).unwrap(), original);
+
+            // Editing it keeps the BOM, exactly once.
+            save_file(bom_path.clone(), "edited\n".into(), None).await.unwrap();
+            assert_eq!(std::fs::read(&bom_path).unwrap(), b"\xEF\xBB\xBFedited\r\n");
+
+            // A file without one does not gain one.
+            let plain = dir.join("plain.md").to_string_lossy().to_string();
+            std::fs::write(&plain, "a\n").unwrap();
+            save_file(plain.clone(), "b\n".into(), None).await.unwrap();
+            assert_eq!(std::fs::read(&plain).unwrap(), b"b\n");
+
+            // Nor does a new file.
+            let fresh = dir.join("new.md").to_string_lossy().to_string();
+            save_file(fresh.clone(), "c".into(), None).await.unwrap();
+            assert_eq!(std::fs::read(&fresh).unwrap(), b"c");
+
+            std::fs::remove_dir_all(&dir).ok();
+        });
+    }
+
+    fn export_headers(value: &str) -> tauri::http::HeaderMap {
+        let mut h = tauri::http::HeaderMap::new();
+        h.insert(EXPORT_PATH_HEADER, value.parse().unwrap());
+        h
+    }
+
+    #[test]
+    fn the_export_path_is_percent_decoded_from_its_header() {
+        // What encodeURIComponent makes of a Windows path with a space and a non-ASCII name.
+        let p = export_path_from_headers(&export_headers("C%3A%5CUsers%5Cme%5CMy%20Notes%5Cr%C3%A9sum%C3%A9.html"))
+            .unwrap();
+        assert_eq!(p, std::path::PathBuf::from("C:\\Users\\me\\My Notes\\résumé.html"));
+    }
+
+    #[test]
+    fn a_missing_empty_or_nul_export_path_is_refused() {
+        assert!(export_path_from_headers(&tauri::http::HeaderMap::new()).is_err());
+        assert!(export_path_from_headers(&export_headers("")).is_err());
+        assert!(export_path_from_headers(&export_headers("out%00.html")).is_err());
+        // Bytes that do not decode to UTF-8.
+        assert!(export_path_from_headers(&export_headers("%FF%FE.html")).is_err());
+    }
+
+    #[test]
+    fn write_export_writes_and_replaces_atomically() {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        rt.block_on(async {
+            let dir = std::env::temp_dir().join(format!("dumont-export-write-{}", std::process::id()));
+            std::fs::create_dir_all(&dir).unwrap();
+            let path = dir.join("out.docx");
+
+            write_export(&path, b"PK\x03\x04first").await.unwrap();
+            assert_eq!(std::fs::read(&path).unwrap(), b"PK\x03\x04first");
+
+            // An existing file is replaced, not appended to or merged.
+            write_export(&path, b"v2").await.unwrap();
+            assert_eq!(std::fs::read(&path).unwrap(), b"v2");
+
+            // An empty export still produces the file.
+            write_export(&path, b"").await.unwrap();
+            assert_eq!(std::fs::metadata(&path).unwrap().len(), 0);
+
+            // No temp file is left beside it.
+            let names: Vec<String> = std::fs::read_dir(&dir)
+                .unwrap()
+                .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+                .collect();
+            assert_eq!(names, vec!["out.docx".to_string()]);
+
+            std::fs::remove_dir_all(&dir).ok();
+        });
+    }
+
+    #[test]
+    fn a_failed_export_write_errors_and_leaves_nothing() {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        rt.block_on(async {
+            let dir = std::env::temp_dir().join(format!("dumont-export-fail-{}", std::process::id()));
+            std::fs::create_dir_all(&dir).unwrap();
+
+            // The target directory does not exist, so the temp file cannot be created.
+            let missing = dir.join("no-such-dir").join("out.html");
+            assert!(matches!(write_export(&missing, b"x").await, Err(CommandError::WriteError(_))));
+
+            // The target is a directory, so the rename fails after the temp file is written.
+            let blocker = dir.join("taken.html");
+            std::fs::create_dir_all(&blocker).unwrap();
+            assert!(matches!(write_export(&blocker, b"x").await, Err(CommandError::WriteError(_))));
+            let names: Vec<String> = std::fs::read_dir(&dir)
+                .unwrap()
+                .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+                .collect();
+            assert_eq!(names, vec!["taken.html".to_string()]);
 
             std::fs::remove_dir_all(&dir).ok();
         });

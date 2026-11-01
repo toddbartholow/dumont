@@ -225,12 +225,10 @@ pub async fn ai_request(
 ) -> Result<(), String> {
     // The frontend validates too, but the endpoint is user-configured input
     // crossing a trust boundary, so re-check here (defense in depth).
-    let valid = reqwest::Url::parse(&endpoint)
-        .map(|u| matches!(u.scheme(), "http" | "https"))
-        .unwrap_or(false);
-    if !valid {
-        return Err("AI endpoint must be a valid http:// or https:// URL.".to_string());
-    }
+    let url = match reqwest::Url::parse(&endpoint) {
+        Ok(u) if matches!(u.scheme(), "http" | "https") => u,
+        _ => return Err("AI endpoint must be a valid http:// or https:// URL.".to_string()),
+    };
 
     // Read the key from the keychain on the blocking pool. The read is blocking
     // and, on unsigned macOS builds, can raise an UNBOUNDED permission prompt, so
@@ -247,6 +245,7 @@ pub async fn ai_request(
             return Err(format!("Could not read the AI API key from the keychain: {e}"));
         }
     };
+    check_key_transport(&url, api_key.as_deref())?;
 
     let request = run_request(
         &endpoint,
@@ -260,6 +259,49 @@ pub async fn ai_request(
         },
     );
     run_cancellable(&state, id, request).await
+}
+
+/// Whether `url` points at this machine: 127.0.0.0/8, ::1 (also as an
+/// IPv4-mapped address), `localhost`, or any `*.localhost` name, which RFC 6761
+/// reserves for loopback. A request to one of these never leaves the machine,
+/// so plain http there exposes nothing on the wire.
+fn is_loopback_host(url: &reqwest::Url) -> bool {
+    let Some(host) = url.host_str() else {
+        return false;
+    };
+    // An IPv6 literal comes back bracketed ("[::1]"); the URL parser has already
+    // normalized IPv4 shorthand like "127.1" to dotted form.
+    let bare = host.trim_start_matches('[').trim_end_matches(']');
+    if let Ok(ip) = bare.parse::<std::net::IpAddr>() {
+        return match ip {
+            std::net::IpAddr::V4(v4) => v4.is_loopback(),
+            std::net::IpAddr::V6(v6) => {
+                v6.is_loopback() || v6.to_ipv4_mapped().is_some_and(|v4| v4.is_loopback())
+            }
+        };
+    }
+    let name = host.trim_end_matches('.').to_ascii_lowercase();
+    name == "localhost" || name.ends_with(".localhost")
+}
+
+/// Refuse to attach the API key to a plain-http request that leaves the
+/// machine. The key travels as a bearer header, so over http to a remote host
+/// anyone on the path (shared Wi-Fi, a proxy, the LAN) reads it in clear text,
+/// and it is the user's paid credential. https is always fine, and so is http
+/// to loopback (Ollama, LM Studio). A keyless request to remote http is still
+/// allowed: there is nothing secret in it, and a LAN model server with no auth
+/// is a real setup.
+fn check_key_transport(url: &reqwest::Url, api_key: Option<&str>) -> Result<(), String> {
+    let has_key = api_key.is_some_and(|k| !k.is_empty());
+    if has_key && url.scheme() == "http" && !is_loopback_host(url) {
+        return Err(
+            "Refusing to send the AI API key over plain http to a remote host, where anyone on \
+             the network could read it. Use an https:// endpoint, or remove the key if this \
+             server does not need one."
+                .to_string(),
+        );
+    }
+    Ok(())
 }
 
 /// Run `request` under cancellation handle `id`, so `cancel(id)` can end it.
@@ -302,8 +344,9 @@ pub async fn ai_cancel(state: tauri::State<'_, AiCancel>, id: u32) -> Result<(),
 #[cfg(test)]
 mod tests {
     use super::{
-        cancel, flush_remainder, pump, run_cancellable, run_request, take_complete_lines, AiCancel,
-        AiEvent, MAX_BODY_BYTES, MAX_ERROR_BODY_BYTES, MAX_LINE_BYTES, STALLED,
+        cancel, check_key_transport, flush_remainder, pump, run_cancellable, run_request,
+        take_complete_lines, AiCancel, AiEvent, MAX_BODY_BYTES, MAX_ERROR_BODY_BYTES,
+        MAX_LINE_BYTES, STALLED,
     };
     use futures_util::{stream, StreamExt};
     use std::time::Duration;
@@ -594,5 +637,55 @@ mod tests {
         });
         assert_eq!(a, Err("cancelled".to_string()));
         assert_eq!(b, Ok(()));
+    }
+
+    fn transport(endpoint: &str, key: Option<&str>) -> Result<(), String> {
+        check_key_transport(&reqwest::Url::parse(endpoint).unwrap(), key)
+    }
+
+    #[test]
+    fn a_key_is_refused_over_http_to_a_remote_host() {
+        for ep in [
+            "http://api.example.com/v1/chat/completions",
+            "http://192.168.1.20:11434/v1/chat/completions",
+            "http://10.0.0.5/v1",
+            "http://[2001:db8::1]/v1",
+            "http://localhost.example.com/v1",
+            "http://notlocalhost/v1",
+            "http://128.0.0.1/v1",
+        ] {
+            let err = transport(ep, Some("sk-secret")).unwrap_err();
+            assert!(err.contains("plain http"), "{ep}: {err}");
+        }
+    }
+
+    #[test]
+    fn a_key_is_allowed_over_https_anywhere() {
+        assert!(transport("https://api.openai.com/v1/chat/completions", Some("sk")).is_ok());
+        assert!(transport("https://192.168.1.20/v1", Some("sk")).is_ok());
+    }
+
+    #[test]
+    fn a_key_is_allowed_over_http_to_loopback() {
+        for ep in [
+            "http://localhost:11434/v1/chat/completions",
+            "http://LOCALHOST/v1",
+            "http://localhost./v1",
+            "http://ollama.localhost:8080/v1",
+            "http://127.0.0.1:1234/v1",
+            "http://127.8.9.10/v1",
+            "http://127.1/v1",
+            "http://[::1]:11434/v1",
+            "http://[::ffff:127.0.0.1]/v1",
+        ] {
+            assert!(transport(ep, Some("sk")).is_ok(), "{ep}");
+        }
+    }
+
+    #[test]
+    fn keyless_http_to_a_remote_host_is_still_allowed() {
+        assert!(transport("http://192.168.1.20:11434/v1", None).is_ok());
+        // An empty key sends no Authorization header (run_request), so it counts as none.
+        assert!(transport("http://api.example.com/v1", Some("")).is_ok());
     }
 }

@@ -466,3 +466,44 @@ describe("the shipped themes", () => {
         }
     });
 });
+
+/**
+ * Selected text, in the shipped themes.
+ *
+ * The selection is painted two ways and both have to read. In the preview, and
+ * on the editor's main range while it has focus, the browser's ::selection draws
+ * --selection-text on --selection-bg. But CodeMirror's drawSelection paints
+ * --selection-bg in a layer BEHIND the text, and the text keeps its own color
+ * wherever there is no native selection: a blurred editor, and every secondary
+ * range. So --text-primary has to read on it too. The light themes used to
+ * invert (a near-black selection meant for white text), which put body text on
+ * them at 1.00 to 2.40:1, dark on dark, the moment the editor lost focus.
+ *
+ * And it must still look like a selection: visibly distinct from the surface it
+ * sits on, the editor and the preview's page.
+ */
+describe("selected text in the shipped themes", () => {
+    const themes = shippedThemes();
+    const ids = BUILTIN_THEMES.map((t) => t.id);
+
+    it.each(ids)("%s: body text reads on the selection drawn behind it", (name) => {
+        const t = themes[name];
+        expect(contrastRatio(t["--text-primary"], t["--selection-bg"])).toBeGreaterThanOrEqual(4.5);
+    });
+
+    it.each(ids)("%s: --selection-text reads on the native selection", (name) => {
+        const t = themes[name];
+        expect(contrastRatio(t["--selection-text"], t["--selection-bg"])).toBeGreaterThanOrEqual(4.5);
+    });
+
+    it.each(ids)("%s: the selection is visibly distinct from the editor and the page", (name) => {
+        const t = themes[name];
+        expect(contrastRatio(t["--selection-bg"], t["--bg-editor"]), "against --bg-editor").toBeGreaterThanOrEqual(1.3);
+        expect(contrastRatio(t["--selection-bg"], t["--bg-primary"]), "against --bg-primary").toBeGreaterThanOrEqual(1.3);
+    });
+
+    it("base2 really is too faint to be Solarized Light's selection", () => {
+        // The reason solarized-light does not use Solarized's own selection color.
+        expect(contrastRatio("#eee8d5", themes["solarized-light"]["--bg-editor"])).toBeLessThan(1.3);
+    });
+});
