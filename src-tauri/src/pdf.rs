@@ -36,9 +36,12 @@ pub async fn export_pdf(app: tauri::AppHandle, html: String, path: String) -> Re
     // load that instead (macOS follows the same route for symmetry).
     let mut temp = std::env::temp_dir();
     temp.push(format!("dumont-export-{}-{}.html", std::process::id(), seq));
-    std::fs::write(&temp, &html).map_err(|e| format!("Failed to stage export HTML: {e}"))?;
+    // From here on every way out of this function deletes the staged file,
+    // including the early failures below that never got as far as a webview.
+    let staged = StagedFile(temp);
+    std::fs::write(&staged.0, &html).map_err(|e| format!("Failed to stage export HTML: {e}"))?;
 
-    let url = tauri::Url::from_file_path(&temp)
+    let url = tauri::Url::from_file_path(&staged.0)
         .map_err(|_| "Failed to build a URL for the export file".to_string())?;
 
     // Signalled once the hidden webview has finished loading the document.
@@ -73,7 +76,7 @@ pub async fn export_pdf(app: tauri::AppHandle, html: String, path: String) -> Re
         .recv_timeout(std::time::Duration::from_secs(30))
         .is_err()
     {
-        cleanup(window, &temp);
+        window_cleanup(window);
         return Err("Timed out rendering the document for PDF export".into());
     }
 
@@ -91,7 +94,7 @@ pub async fn export_pdf(app: tauri::AppHandle, html: String, path: String) -> Re
         let result = unsafe { print_to_pdf(platform, &target) };
         let _ = done_tx.send(result);
     }) {
-        cleanup(window, &temp);
+        window_cleanup(window);
         return Err(format!("Failed to access the export view: {e}"));
     }
 
@@ -106,7 +109,7 @@ pub async fn export_pdf(app: tauri::AppHandle, html: String, path: String) -> Re
     #[cfg(target_os = "macos")]
     let outcome = outcome.and_then(|()| wait_for_written_file(std::path::Path::new(&path)));
 
-    cleanup(window, &temp);
+    window_cleanup(window);
     outcome
 }
 
@@ -131,12 +134,73 @@ fn wait_for_written_file(path: &std::path::Path) -> Result<(), String> {
     Err("Timed out writing the PDF".into())
 }
 
-/// Close the hidden export window and delete its staged HTML file. Best-effort:
-/// a failure to clean up must never mask the export result.
+/// Close the hidden export window. Best-effort: a failure to clean up must
+/// never mask the export result. The staged HTML goes when `StagedFile` drops.
 #[cfg(any(target_os = "windows", target_os = "macos"))]
-fn cleanup(window: tauri::WebviewWindow, temp: &std::path::Path) {
+fn window_cleanup(window: tauri::WebviewWindow) {
     let _ = window.close();
-    let _ = std::fs::remove_file(temp);
+}
+
+/// How many times the staged HTML removal is tried, and the first pause between
+/// tries (doubled after each). Six tries at 100 ms doubling span about 3 s,
+/// which covers WebView2 letting go of the file after its window closes.
+#[cfg(any(target_os = "windows", target_os = "macos", test))]
+const CLEANUP_ATTEMPTS: u32 = 6;
+#[cfg(any(target_os = "windows", target_os = "macos", test))]
+const CLEANUP_FIRST_DELAY: std::time::Duration = std::time::Duration::from_millis(100);
+
+/// The temp file the export HTML is staged in. Dropping it deletes the file on
+/// a worker thread, retrying with backoff.
+///
+/// A single `remove_file` right after `window.close()` used to fail on Windows,
+/// because close only queues the teardown and WebView2 still holds the file
+/// open for a moment, so every export left a `dumont-export-*.html` behind in
+/// the temp directory. Early failures (no URL, no window) skipped the removal
+/// entirely. Retrying off the command's thread lets the export return at once.
+#[cfg(any(target_os = "windows", target_os = "macos", test))]
+struct StagedFile(std::path::PathBuf);
+
+#[cfg(any(target_os = "windows", target_os = "macos", test))]
+impl Drop for StagedFile {
+    fn drop(&mut self) {
+        let path = std::mem::take(&mut self.0);
+        let spawned = std::thread::Builder::new()
+            .name("pdf-export-cleanup".into())
+            .spawn({
+                let path = path.clone();
+                move || {
+                    remove_with_retry(&path, CLEANUP_ATTEMPTS, CLEANUP_FIRST_DELAY);
+                }
+            });
+        // No thread to be had: one attempt here is better than none.
+        if spawned.is_err() {
+            let _ = std::fs::remove_file(&path);
+        }
+    }
+}
+
+/// Delete `path`, retrying up to `attempts` times with a doubling delay that
+/// starts at `first_delay`. True once the file is gone (a file that was never
+/// there counts), false if it is still there after the last try.
+#[cfg(any(target_os = "windows", target_os = "macos", test))]
+fn remove_with_retry(
+    path: &std::path::Path,
+    attempts: u32,
+    first_delay: std::time::Duration,
+) -> bool {
+    let mut delay = first_delay;
+    for attempt in 0..attempts {
+        match std::fs::remove_file(path) {
+            Ok(()) => return true,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return true,
+            Err(_) if attempt + 1 < attempts => {
+                std::thread::sleep(delay);
+                delay = delay.saturating_mul(2);
+            }
+            Err(_) => {}
+        }
+    }
+    false
 }
 
 /// Drive WebView2's native `PrintToPdf` to `path` and block (pumping the message
@@ -283,4 +347,73 @@ pub async fn export_pdf(
     _path: String,
 ) -> Result<(), String> {
     Err("Direct PDF export is only available on Windows and macOS".into())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{remove_with_retry, StagedFile};
+    use std::path::PathBuf;
+    use std::time::{Duration, Instant};
+
+    fn temp_path(name: &str) -> PathBuf {
+        std::env::temp_dir().join(format!("dumont-pdf-test-{}-{name}", std::process::id()))
+    }
+
+    #[test]
+    fn removes_a_file_on_the_first_try() {
+        let p = temp_path("plain.html");
+        std::fs::write(&p, "x").unwrap();
+        assert!(remove_with_retry(&p, 3, Duration::from_millis(1)));
+        assert!(!p.exists());
+    }
+
+    #[test]
+    fn a_missing_file_counts_as_removed() {
+        let p = temp_path("never-there.html");
+        assert!(remove_with_retry(&p, 3, Duration::from_millis(1)));
+    }
+
+    #[test]
+    fn gives_up_after_the_last_attempt() {
+        // remove_file never succeeds on a directory, so every attempt fails.
+        let p = temp_path("a-directory");
+        std::fs::create_dir_all(&p).unwrap();
+        let start = Instant::now();
+        assert!(!remove_with_retry(&p, 3, Duration::from_millis(10)));
+        // Two pauses between three tries: 10 ms + 20 ms.
+        assert!(start.elapsed() >= Duration::from_millis(30));
+        std::fs::remove_dir(&p).unwrap();
+    }
+
+    // The case this exists for: the webview still has the file open, without
+    // delete sharing, when cleanup starts. Windows refuses the delete until the
+    // handle closes, and the retry outlasts it.
+    #[cfg(windows)]
+    #[test]
+    fn outlasts_a_handle_that_blocks_deletion() {
+        use std::os::windows::fs::OpenOptionsExt;
+        let p = temp_path("held.html");
+        std::fs::write(&p, "x").unwrap();
+        let held = std::fs::OpenOptions::new().read(true).share_mode(0).open(&p).unwrap();
+        assert!(std::fs::remove_file(&p).is_err(), "the handle should block deletion");
+        let releaser = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(150));
+            drop(held);
+        });
+        assert!(remove_with_retry(&p, 6, Duration::from_millis(50)));
+        releaser.join().unwrap();
+        assert!(!p.exists());
+    }
+
+    #[test]
+    fn dropping_the_staged_file_deletes_it() {
+        let p = temp_path("staged.html");
+        std::fs::write(&p, "x").unwrap();
+        drop(StagedFile(p.clone()));
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while p.exists() && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(!p.exists());
+    }
 }

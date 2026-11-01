@@ -6,7 +6,7 @@ import { fontStack } from './appearanceOptions';
 import { resolveThemeStyles, type ThemeDef } from '../themes';
 import { typeScale } from './typeScale';
 import { save } from '@tauri-apps/plugin-dialog';
-import { writeTextFile, writeFile } from '@tauri-apps/plugin-fs';
+import { writeExportFile } from './exportWrite';
 import { invoke } from '@tauri-apps/api/core';
 import DOMPurify from 'dompurify';
 
@@ -485,7 +485,7 @@ export async function exportToHTML(
     });
 
     if (!filePath) return false;
-    await writeTextFile(filePath, fullHTML);
+    await writeExportFile(filePath, fullHTML);
     return true;
 }
 
@@ -576,7 +576,7 @@ export async function exportToDocx(
         out instanceof Blob ? new Uint8Array(await out.arrayBuffer())
         : out instanceof Uint8Array ? out
         : new Uint8Array(out as ArrayBuffer);
-    await writeFile(filePath, bytes);
+    await writeExportFile(filePath, bytes);
     return true;
 }
 

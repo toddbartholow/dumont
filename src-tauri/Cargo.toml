@@ -20,7 +20,6 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 tauri = { version = "2", features = [] }
 tauri-plugin-opener = "2"
-tauri-plugin-fs = "2"
 tauri-plugin-dialog = "2"
 # Forward a double-clicked file to the running instance instead of spawning a
 # second app (and racing it for the session-restore state).
@@ -53,6 +52,9 @@ tokio = { version = "1", features = ["fs", "time", "sync", "macros", "rt", "io-u
 # lock file so we don't pull a second copy of the HTTP stack.
 reqwest = { version = "0.13", features = ["stream"] }
 futures-util = "0.3"
+# Decodes the export path out of its request header (write_export_file). Already
+# in the lock file through reqwest's url dependency, so this adds no new crate.
+percent-encoding = "2"
 # OS keychain for the AI API key (SECURITY-01). Pure-Rust backends: Windows
 # Credential Manager, macOS Keychain, and Linux Secret Service (zbus + crypto-rust,
 # no system C libs needed at build time).
