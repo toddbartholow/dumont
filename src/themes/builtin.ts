@@ -122,8 +122,12 @@ const light: ThemeDef = {
         "--scrollbar-thumb": "#d4d4d4",
         "--scrollbar-hover": "#a3a3a3",
 
-        "--selection-bg": "#171717",
-        "--selection-text": "#ffffff",
+        // A light wash, not an inverted block: drawSelection paints this BEHIND the
+        // text, and a blurred editor or a secondary range keeps the text color, so
+        // the old #171717 put #171717 text on #171717 (1.00:1). 12.64:1 for body
+        // text, 1.42:1 against the page.
+        "--selection-bg": "#c8daf5",
+        "--selection-text": "#171717",
     },
 };
 
@@ -175,8 +179,11 @@ const paper: ThemeDef = {
         "--scrollbar-thumb": "#c9c0ae",
         "--scrollbar-hover": "#a69d8d",
 
-        "--selection-bg": "#5c4033",
-        "--selection-text": "#faf8f3",
+        // Was #5c4033, the dark brown, with #3d3d3d text over it at 1.16:1 wherever
+        // the selection is drawn behind the text (blurred editor, secondary ranges).
+        // 7.09:1 for body text, 1.44:1 against the editor and 1.35:1 against the panel.
+        "--selection-bg": "#e0cfae",
+        "--selection-text": "#3d3d3d",
     },
 };
 
@@ -384,7 +391,10 @@ const solarizedDark: ThemeDef = {
         "--scrollbar-thumb": "#073642",
         "--scrollbar-hover": "#586e75",
 
-        "--selection-bg": "#073642", // base02, which IS Solarized's selection
+        // base02 (#073642) is Solarized's own selection, and only 1.15:1 against
+        // base03, which is barely there. Lifted a step along the same hue: 1.37:1
+        // against the page, 8.97:1 for body text.
+        "--selection-bg": "#0a4251",
         "--selection-text": "#eee8d5",
 
         // Solarized's syntax ROLES: green keywords, cyan strings, blue functions,
@@ -473,8 +483,12 @@ const solarizedLight: ThemeDef = {
         "--scrollbar-thumb": "#ded8c4",
         "--scrollbar-hover": "#93a1a1",
 
-        "--selection-bg": "#1a6fa8",
-        "--selection-text": "#fdf6e3",
+        // Was #1a6fa8 under #073642 text, 2.40:1 wherever drawSelection paints it
+        // behind the text. base2 (#eee8d5), Solarized's own light selection, is
+        // only 1.14:1 against base3, so this sits a step darker along the same
+        // hue: 8.92:1 for body text, 1.35:1 against the page.
+        "--selection-bg": "#dfd6b3",
+        "--selection-text": "#073642",
 
         // The same roles as the dark side, moving the other way: a code color on base2
         // is DARKENED to clear 4.5:1, where on base02 it is lightened. That symmetry is
@@ -717,8 +731,11 @@ const catppuccinLatte: ThemeDef = {
         "--scrollbar-thumb": "#ccd0da",
         "--scrollbar-hover": "#acb0be",
 
-        "--selection-bg": "#8839ef",
-        "--selection-text": "#eff1f5",
+        // Was mauve #8839ef under #4c4f69 text, 1.47:1 wherever drawSelection paints
+        // it behind the text. A lavender wash: 5.23:1 for body text, 1.35:1
+        // against the page.
+        "--selection-bg": "#c6d0f5",
+        "--selection-text": "#4c4f69",
 
         // The same roles as Mocha, in Latte's accents, darkened to clear 4.5:1 on the
         // mantle a code block sits on.
