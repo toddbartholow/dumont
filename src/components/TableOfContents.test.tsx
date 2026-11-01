@@ -70,3 +70,32 @@ describe("TableOfContents", () => {
         scrollIntoView.mockRestore();
     });
 });
+
+describe("TableOfContents headings", () => {
+    // The panel used to match `#` lines anywhere: a bash comment in a fence and a
+    // YAML key in frontmatter both showed up, titles carried raw markdown, and a
+    // setext heading (text over ===) was missing.
+    it("lists real headings only, as display text", () => {
+        const doc = [
+            "---", "# not a heading: frontmatter", "---",
+            "# **Bold** [link](x.md)",
+            "```bash", "# a comment", "```",
+            "Setext", "======",
+        ].join("\n");
+        render(<TableOfContents isOpen content={doc} onClose={() => { }} />);
+        const rows = screen.getAllByRole("button", { name: /^Go to heading:/ });
+        expect(rows.map((r) => r.getAttribute("aria-label"))).toEqual([
+            "Go to heading: Bold link",
+            "Go to heading: Setext",
+        ]);
+    });
+
+    it("jumps to the setext heading's source line", () => {
+        const goto = vi.fn();
+        window.addEventListener("dumont:goto-line", goto);
+        render(<TableOfContents isOpen content={"intro\n\nTitle\n---"} onClose={() => { }} />);
+        fireEvent.click(screen.getByRole("button", { name: "Go to heading: Title" }));
+        expect((goto.mock.calls[0][0] as CustomEvent).detail).toEqual({ line: 3 });
+        window.removeEventListener("dumont:goto-line", goto);
+    });
+});

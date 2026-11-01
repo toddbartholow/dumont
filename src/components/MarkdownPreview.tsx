@@ -16,6 +16,7 @@ import { READER_WIDTHS, DEFAULT_READER_WIDTH } from "../utils/readerWidth";
 import type { Scroller } from "../utils/scrollSync";
 import { MermaidBlock } from "./MermaidBlock";
 import { isMermaidLanguage } from "../utils/mermaidLanguage";
+import { slugify, createSlugger } from "../utils/slugify";
 
 // Detect KaTeX-style math so we only load the heavy katex bundle when needed.
 // $$...$$ for block math, $...$ for inline math (not preceded/followed by digit
@@ -97,7 +98,9 @@ function hastText(node: HastTextNode): string {
 }
 function rehypeHeadingIds() {
     return (tree: { children?: HastTextNode[] }) => {
-        const seen = new Map<string, number>();
+        // The same slugger the outline uses (utils/slugify), so an outline
+        // entry's id is the id the preview gives that heading.
+        const slugger = createSlugger();
         const walk = (nodes?: HastTextNode[]) => {
             if (!nodes) return;
             for (const node of nodes) {
@@ -109,16 +112,9 @@ function rehypeHeadingIds() {
                     // suffix repeats so the DOM never carries duplicate ids.
                     // Slugs stay the fallback. SYNTAX-01.
                     const existing = node.properties.id;
-                    if (typeof existing === "string" && existing !== "") {
-                        const count = seen.get(existing) ?? 0;
-                        seen.set(existing, count + 1);
-                        if (count > 0) node.properties.id = `${existing}-${count}`;
-                    } else {
-                        const base = slugify(hastText(node)) || "section";
-                        const count = seen.get(base) ?? 0;
-                        seen.set(base, count + 1);
-                        node.properties.id = count === 0 ? base : `${base}-${count}`;
-                    }
+                    node.properties.id = typeof existing === "string" && existing !== ""
+                        ? slugger.reserve(existing)
+                        : slugger.slug(hastText(node));
                 }
                 walk(node.children);
             }
@@ -185,16 +181,6 @@ interface MarkdownPreviewProps {
     /** Reading column tier: "narrow" | "medium" | "wide" | "full". */
     readerWidth?: string;
 }
-
-/** Slugify heading text into a stable, URL-safe id (GitHub-style). */
-const slugify = (text: string): string =>
-    text
-        .toLowerCase()
-        .trim()
-        .replace(/[^\w\s-]/g, "")
-        .replace(/\s+/g, "-")
-        .replace(/-+/g, "-")
-        .replace(/^-|-$/g, "");
 
 /** Extract the plain-text label from a React node tree (for slug + anchor link). */
 function nodeText(node: React.ReactNode): string {

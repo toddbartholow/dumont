@@ -9,6 +9,7 @@ import { describe, it, expect, vi, afterEach } from "vitest";
 import { render, cleanup, waitFor } from "@testing-library/react";
 import { MarkdownPreview } from "./MarkdownPreview";
 import { invoke } from "@tauri-apps/api/core";
+import { extractHeadings } from "../utils/outline";
 
 vi.mock("@tauri-apps/api/core", () => ({
     invoke: vi.fn(async () => null),
@@ -223,5 +224,22 @@ describe("local images", () => {
         await waitFor(() => expect(created).toHaveBeenCalledTimes(2));
 
         expect(container.querySelector("img")?.getAttribute("src")).toBe("blob:1");
+    });
+});
+
+// Slugs used to be ASCII-only, so every CJK or Cyrillic heading became
+// "section", "section-1"... The outline extractor names headings with the same
+// slugger, so its ids must be exactly the ids the preview put in the DOM.
+describe("heading ids", () => {
+    it("slugs non-Latin headings and agrees with the outline's ids", async () => {
+        const md = "# 見出し\n\n# Привет мир\n\n## Setup\n\n## Setup\n\n# Intro {#setup}\n\n```\n# not a heading\n```";
+        const { container } = renderPreview(md);
+        const ids = await waitFor(() => {
+            const hs = Array.from(container.querySelectorAll("h1, h2"));
+            expect(hs.length).toBe(5);
+            return hs.map((h) => h.id);
+        });
+        expect(ids).toEqual(["見出し", "привет-мир", "setup", "setup-1", "setup-2"]);
+        expect(extractHeadings(md).map((h) => h.id)).toEqual(ids);
     });
 });
