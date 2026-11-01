@@ -11,7 +11,7 @@ import rehypeSanitize from "rehype-sanitize";
 import { SANITIZE_SCHEMA } from "../utils/sanitizeSchema";
 import { invoke } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { parseFrontmatter, serializeFrontmatter, type FrontmatterValue } from "../utils/frontmatter";
+import { parseFrontmatter, updateFrontmatter, type FrontmatterValue } from "../utils/frontmatter";
 import { READER_WIDTHS, DEFAULT_READER_WIDTH } from "../utils/readerWidth";
 import type { Scroller } from "../utils/scrollSync";
 import { MermaidBlock } from "./MermaidBlock";
@@ -1061,7 +1061,7 @@ function MarkdownPreviewImpl({
                                 editable={!!onContentChange}
                                 onChange={(next) => {
                                     if (!onContentChange) return;
-                                    onContentChange(serializeFrontmatter(next, parsedBody));
+                                    onContentChange(updateFrontmatter(content, next));
                                 }}
                             />
                         </div>
