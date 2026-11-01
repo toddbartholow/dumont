@@ -88,11 +88,13 @@ export default defineConfig(async () => ({
           if (!id.includes("node_modules")) return;
           // React core — never split apart in practice. ~150 kB minified.
           if (/[\\/]node_modules[\\/](react|react-dom|scheduler)[\\/]/.test(id)) return "react";
-          // Mermaid (~580 kB) — only ever loaded via dynamic import, so this
-          // stays an async chunk off the cold-start path.
-          if (/[\\/]node_modules[\\/]mermaid[\\/]/.test(id)) return "mermaid";
-          // KaTeX + its remark/rehype glue — also dynamically imported (math docs only).
-          if (/[\\/]node_modules[\\/](katex|rehype-katex|remark-math)[\\/]/.test(id)) return "katex";
+          // Mermaid and KaTeX deliberately have NO rule here. Both are only
+          // reached through dynamic import(), so Rollup already gives them async
+          // chunks. Naming a manual chunk also pulls in every dependency nobody
+          // else claims, and for mermaid that included Vite's own preload helper
+          // (every lazy() import calls it). The entry then imported the 3 MB
+          // mermaid chunk statically: it was preloaded and evaluated on every
+          // launch, about 15 MB of JS heap before a document was open.
           // highlight.js + lowlight + rehype-highlight — split out of the
           // markdown chunk so the syntax-highlighting payload caches separately.
           if (/[\\/]node_modules[\\/](rehype-highlight|lowlight|highlight\.js)[\\/]/.test(id)) return "highlight";

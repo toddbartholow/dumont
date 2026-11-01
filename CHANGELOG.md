@@ -11,6 +11,14 @@ divider is the upstream project's changelog, retained for provenance.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Mermaid and KaTeX no longer load at startup.** A build setting made the
+  diagram library a hard dependency of the app's entry code, so all 3 MB of it
+  was fetched and run on every launch, even with no document open. Both now
+  load the first time a document needs them, and only the diagram types it
+  uses. With an empty window, the JS heap drops from 23 MB to 8 MB.
+
 ## [1.1.7] - 2026-10-31
 
 ### Fixed
