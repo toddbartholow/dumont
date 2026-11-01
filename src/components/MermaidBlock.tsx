@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, memo } from "react";
 import { useTheme } from "../context/useTheme";
 import { themeType, type ThemeDef } from "../themes";
+import { sanitizeDiagramSvg } from "../utils/diagramSanitize";
 
 // Single shared mermaid module promise — loaded only on first use.
 let mermaidPromise: Promise<typeof import("mermaid")["default"]> | null = null;
@@ -86,12 +87,15 @@ function MermaidBlockImpl({ code }: MermaidBlockProps) {
             })
             .then((result) => {
                 if (cancelled) return;
-                svgCache.set(cacheKey, result.svg);
+                // Sanitized once, before it is cached, so a cache hit is never
+                // the raw render. Same pass the exports run (utils/diagramSanitize).
+                const clean = sanitizeDiagramSvg(result.svg);
+                svgCache.set(cacheKey, clean);
                 if (svgCache.size > SVG_CACHE_CAP) {
                     const oldest = svgCache.keys().next().value;
                     if (oldest !== undefined) svgCache.delete(oldest);
                 }
-                setSvg(result.svg);
+                setSvg(clean);
             })
             .catch((err: unknown) => {
                 if (cancelled) return;
@@ -122,7 +126,8 @@ function MermaidBlockImpl({ code }: MermaidBlockProps) {
     return (
         <div
             className="my-4 flex justify-center mermaid-rendered overflow-x-auto"
-            // mermaid output is from our own module (securityLevel: strict) — safe to inject as HTML
+            // mermaid renders with securityLevel: strict, and its SVG has also been
+            // through DOMPurify (sanitizeDiagramSvg above) before it gets here.
             dangerouslySetInnerHTML={{ __html: svg }}
         />
     );

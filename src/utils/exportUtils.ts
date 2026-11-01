@@ -8,7 +8,7 @@ import { typeScale } from './typeScale';
 import { save } from '@tauri-apps/plugin-dialog';
 import { writeTextFile, writeFile } from '@tauri-apps/plugin-fs';
 import { invoke } from '@tauri-apps/api/core';
-import DOMPurify from 'dompurify';
+import { sanitizeDiagramSvg } from './diagramSanitize';
 
 // The one amber every theme highlights with, lifted from `.markdown-body mark` in
 // index.css. It is deliberately not a theme token: the app paints ==highlight==
@@ -382,22 +382,14 @@ export async function prepareExportHtml(rawHtml: string): Promise<string> {
     }
 
     // Mermaid is the one rendered-content path that never passes through the
-    // Markdown sanitizer: MermaidBlock injects the SVG with dangerouslySetInnerHTML,
-    // trusting mermaid's own securityLevel:strict. In the app the CSP is a backstop,
-    // but a standalone exported .html has NO CSP, so a mermaid or DOMPurify bypass
-    // would run script in whoever opens the export downstream. Re-sanitize each SVG
-    // here as an independent gate: the shapes, native <text> labels, and colors
-    // survive; any script, event handler, or javascript: URL does not.
+    // Markdown sanitizer. MermaidBlock already runs its SVG through DOMPurify,
+    // but a standalone exported .html has NO CSP, so the export re-sanitizes as
+    // an independent gate against whatever the live DOM holds: the shapes, the
+    // <text> and htmlLabels <foreignObject> labels, and the colors survive; any
+    // script, event handler, or javascript: URL does not. One config for both,
+    // in utils/diagramSanitize.
     for (const container of Array.from(root.querySelectorAll(".mermaid-rendered"))) {
-        container.innerHTML = DOMPurify.sanitize(container.innerHTML, {
-            // Keep the diagram: SVG shapes and filters, the native <text> labels
-            // mermaid renders with (it uses no foreignObject), and the <style> block
-            // that carries its colors. The html profile lets DOMPurify reach INTO any
-            // foreignObject to sanitize it rather than trust it, so a script or
-            // handler in a label is still removed.
-            USE_PROFILES: { svg: true, svgFilters: true, html: true },
-            ADD_TAGS: ["style"],
-        });
+        container.innerHTML = sanitizeDiagramSvg(container.innerHTML);
         // DOMPurify sanitizes markup, not CSS, and the export has no CSP, so close
         // the one channel that still phones home: @import and remote url() in the
         // <style> block and in inline style attributes. mermaid's own url(#marker)
