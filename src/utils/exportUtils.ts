@@ -298,6 +298,18 @@ function generateExportCSS(
             transform: scale(1.1);
         }
 
+        /* GFM task items: the checkbox takes the bullet's place on the task
+           item itself, so a list mixing tasks and plain items keeps the plain
+           items' bullets. Mirrors index.css. */
+        li.task-list-item {
+            list-style-type: none;
+        }
+        li.task-list-item > input[type="checkbox"],
+        li.task-list-item > p:first-child > input[type="checkbox"]:first-child {
+            margin: 0 0.5em 0.2em -1.5rem;
+            vertical-align: middle;
+        }
+
         /* Syntax highlighting */
         .hljs-keyword { color: ${c['--hljs-keyword']}; }
         .hljs-string { color: ${c['--hljs-string']}; }
