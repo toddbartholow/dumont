@@ -114,31 +114,47 @@ enum Eol {
     Crlf,
 }
 
-/// Detect a file's dominant line ending by reading just its first chunk and
-/// inspecting the first newline. `\r\n` → Crlf, a bare `\n` → Lf, and a file with
-/// no newline at all (or that can't be read) falls back to Lf. Cheap: we never
-/// read more than the first 64 KB regardless of file size. EOL-01.
-async fn detect_file_eol(path: &str) -> Eol {
+/// The UTF-8 byte order mark. Some Windows tools (Notepad before 2019, many
+/// exporters) start every file with it. ENC-01.
+const BOM: char = '\u{FEFF}';
+
+/// The on-disk conventions a save must keep: the line ending, and whether the
+/// file starts with a UTF-8 BOM.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct FileFormat {
+    eol: Eol,
+    bom: bool,
+}
+
+/// Detect a file's conventions by reading just its first chunk. The line ending
+/// comes from the first newline: `\r\n` → Crlf, a bare `\n` → Lf, and a file with
+/// no newline at all (or that can't be read) falls back to Lf. The BOM is the
+/// first three bytes. Cheap: we never read more than the first 64 KB regardless
+/// of file size. EOL-01, ENC-01.
+async fn detect_file_format(path: &str) -> FileFormat {
     use tokio::io::AsyncReadExt;
+    let plain = FileFormat { eol: Eol::Lf, bom: false };
     let mut file = match tokio::fs::File::open(path).await {
         Ok(f) => f,
-        Err(_) => return Eol::Lf,
+        Err(_) => return plain,
     };
     let mut buf = vec![0u8; 64 * 1024];
     let n = match file.read(&mut buf).await {
         Ok(n) => n,
-        Err(_) => return Eol::Lf,
+        Err(_) => return plain,
     };
-    for i in 0..n {
-        if buf[i] == b'\n' {
-            return if i > 0 && buf[i - 1] == b'\r' {
-                Eol::Crlf
-            } else {
-                Eol::Lf
-            };
-        }
-    }
-    Eol::Lf
+    format_of(&buf[..n])
+}
+
+/// The conventions of a file whose first bytes are `head`. Split out of
+/// `detect_file_format` so the tests can feed it bytes directly.
+fn format_of(head: &[u8]) -> FileFormat {
+    let bom = head.starts_with("\u{FEFF}".as_bytes());
+    let eol = match head.iter().position(|&b| b == b'\n') {
+        Some(i) if i > 0 && head[i - 1] == b'\r' => Eol::Crlf,
+        _ => Eol::Lf,
+    };
+    FileFormat { eol, bom }
 }
 
 /// Re-apply a file's line ending to editor content (which CodeMirror always
@@ -223,7 +239,12 @@ pub async fn read_file(path: String) -> Result<FileData, CommandError> {
     // doc-sync "change" the text and mark a freshly opened file dirty. The
     // on-disk convention is not lost: `save_file` re-detects it from the file
     // itself and writes CRLF back. EOL-01.
-    let content = apply_eol(&raw, Eol::Lf);
+    //
+    // The BOM goes the same way, for a worse reason than a dirty flag: left in,
+    // it is an invisible first character, so the frontmatter regex (anchored at
+    // `^---`) no longer matches and the YAML renders as body text. `save_file`
+    // puts it back when the file on disk had one. ENC-01.
+    let content = apply_eol(raw.strip_prefix(BOM).unwrap_or(&raw), Eol::Lf);
 
     let name = file_path
         .file_name()
@@ -312,9 +333,19 @@ async fn write_document(path: &str, target: &Path, content: String) -> Result<u6
     // saving a Windows file doesn't rewrite every line and produce a noisy diff.
     // A brand-new file (save-as / new note) has no existing EOL, so we keep the
     // editor's LF. EOL-01.
+    //
+    // A UTF-8 BOM is restored the same way: `read_file` strips it, and a file
+    // that had one keeps it, so a tool that relies on it still reads the file
+    // as UTF-8. A new file gets none. ENC-01.
     let file_exists = target.exists();
     let content = if file_exists {
-        apply_eol(&content, detect_file_eol(path).await)
+        let format = detect_file_format(path).await;
+        let content = apply_eol(&content, format.eol);
+        if format.bom && !content.starts_with(BOM) {
+            format!("{BOM}{content}")
+        } else {
+            content
+        }
     } else {
         content
     };
@@ -1142,7 +1173,7 @@ mod tests {
     use super::{
         apply_eol, find_backlinks, is_markdown_path, key_from_password, read_file, read_key_entry, sanitize_image_name,
         mtime_ms, save_file, save_lock, save_target, scan_backlinks, search_markdown_tree, validate_rel_path,
-        wikilinks_in_line, BacklinkResult, CommandError, Eol, SAVE_LOCKS,
+        wikilinks_in_line, format_of, BacklinkResult, CommandError, Eol, FileFormat, SAVE_LOCKS,
     };
     use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -1285,6 +1316,74 @@ mod tests {
             let lf_path = dir.join("new.md").to_string_lossy().to_string();
             save_file(lf_path.clone(), "a\nb".into(), None).await.unwrap();
             assert_eq!(std::fs::read_to_string(&lf_path).unwrap(), "a\nb");
+
+            std::fs::remove_dir_all(&dir).ok();
+        });
+    }
+
+    #[test]
+    fn format_of_detects_the_bom_and_the_line_ending() {
+        let f = |eol, bom| FileFormat { eol, bom };
+        assert_eq!(format_of(b"a\nb"), f(Eol::Lf, false));
+        assert_eq!(format_of(b"a\r\nb"), f(Eol::Crlf, false));
+        assert_eq!(format_of(b"\xEF\xBB\xBF---\r\ntitle: x\r\n"), f(Eol::Crlf, true));
+        assert_eq!(format_of(b"\xEF\xBB\xBF"), f(Eol::Lf, true));
+        assert_eq!(format_of(b""), f(Eol::Lf, false));
+        // Only a BOM at the very start counts.
+        assert_eq!(format_of(b"x\xEF\xBB\xBF"), f(Eol::Lf, false));
+    }
+
+    #[test]
+    fn read_file_strips_the_bom_so_frontmatter_starts_the_text() {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        rt.block_on(async {
+            let dir = std::env::temp_dir().join(format!("dumont-read-bom-{}", std::process::id()));
+            std::fs::create_dir_all(&dir).unwrap();
+            let path = dir.join("bom.md").to_string_lossy().to_string();
+
+            std::fs::write(&path, "\u{FEFF}---\r\ntitle: x\r\n---\r\nbody\r\n").unwrap();
+            let fd = read_file(path).await.unwrap();
+            assert_eq!(fd.content, "---\ntitle: x\n---\nbody\n");
+
+            std::fs::remove_dir_all(&dir).ok();
+        });
+    }
+
+    #[test]
+    fn save_file_restores_the_bom_only_where_there_was_one() {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        rt.block_on(async {
+            let dir = std::env::temp_dir().join(format!("dumont-save-bom-{}", std::process::id()));
+            std::fs::create_dir_all(&dir).unwrap();
+
+            // A BOM + CRLF file round-trips through read and save byte for byte.
+            let bom_path = dir.join("bom.md").to_string_lossy().to_string();
+            let original = "\u{FEFF}---\r\ntitle: x\r\n---\r\nbody\r\n";
+            std::fs::write(&bom_path, original).unwrap();
+            let fd = read_file(bom_path.clone()).await.unwrap();
+            save_file(bom_path.clone(), fd.content, None).await.unwrap();
+            assert_eq!(std::fs::read_to_string(&bom_path).unwrap(), original);
+
+            // Editing it keeps the BOM, exactly once.
+            save_file(bom_path.clone(), "edited\n".into(), None).await.unwrap();
+            assert_eq!(std::fs::read(&bom_path).unwrap(), b"\xEF\xBB\xBFedited\r\n");
+
+            // A file without one does not gain one.
+            let plain = dir.join("plain.md").to_string_lossy().to_string();
+            std::fs::write(&plain, "a\n").unwrap();
+            save_file(plain.clone(), "b\n".into(), None).await.unwrap();
+            assert_eq!(std::fs::read(&plain).unwrap(), b"b\n");
+
+            // Nor does a new file.
+            let fresh = dir.join("new.md").to_string_lossy().to_string();
+            save_file(fresh.clone(), "c".into(), None).await.unwrap();
+            assert_eq!(std::fs::read(&fresh).unwrap(), b"c");
 
             std::fs::remove_dir_all(&dir).ok();
         });
