@@ -9,6 +9,7 @@ import { save } from '@tauri-apps/plugin-dialog';
 import { writeTextFile, writeFile } from '@tauri-apps/plugin-fs';
 import { invoke } from '@tauri-apps/api/core';
 import { sanitizeDiagramSvg } from './diagramSanitize';
+import { katexExportCss } from './katexExport';
 
 // The one amber every theme highlights with, lifted from `.markdown-body mark` in
 // index.css. It is deliberately not a theme token: the app paints ==highlight==
@@ -445,7 +446,9 @@ export function generateHTML(
     font: FontFamily,
     fontSize: FontSize,
     userThemes: readonly ThemeDef[],
-    includeFooter: boolean = true
+    includeFooter: boolean = true,
+    // Extra stylesheet for the content, e.g. KaTeX's (katexExportCss).
+    extraCss: string = ''
 ): string {
     const css = generateExportCSS(theme, font, fontSize, userThemes);
     const safeTitle = escapeHtml(title);
@@ -468,6 +471,7 @@ export function generateHTML(
     <meta name="date" content="${new Date().toISOString()}">
     <title>${safeTitle}</title>
     <style>${css}</style>
+    ${extraCss ? `<style>${extraCss}</style>` : ''}
 </head>
 <body>
     <article>
@@ -491,7 +495,7 @@ export async function exportToHTML(
 ): Promise<boolean> {
     const title = fileName.replace(/\.(md|markdown)$/i, '');
     const cleaned = await prepareExportHtml(htmlContent);
-    const fullHTML = generateHTML(cleaned, title, theme, font, fontSize, userThemes);
+    const fullHTML = generateHTML(cleaned, title, theme, font, fontSize, userThemes, true, await katexExportCss(cleaned));
 
     // Use Tauri save dialog
     const filePath = await save({
@@ -745,7 +749,7 @@ export async function exportToPDF(
     // theme (see `_theme` above, deliberately ignored), because a PDF is for printing
     // and paper is white. A built-in id needs no extra definitions to resolve, so the
     // empty list here is a fact rather than the omission that broke the HTML export.
-    const fullHTML = generateHTML(cleaned, title, 'light', font, fontSize, [], true);
+    const fullHTML = generateHTML(cleaned, title, 'light', font, fontSize, [], true, await katexExportCss(cleaned));
 
     const canSaveSilently =
         typeof navigator !== 'undefined' &&
