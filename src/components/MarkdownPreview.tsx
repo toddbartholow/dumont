@@ -22,6 +22,7 @@ import { classifyHref, relativeLinkPath } from "../utils/previewLinks";
 import { resolveRelativePath } from "../utils/resolveRelativePath";
 import { createLocalImageCache } from "../utils/localImageCache";
 import { isRasterDataImage } from "../utils/imageSources";
+import { writeCleanSelection } from "../utils/previewCopy";
 
 // Detect KaTeX-style math so we only load the heavy katex bundle when needed.
 // $$...$$ for block math, $...$ for inline math (not preceded/followed by digit
@@ -1119,6 +1120,14 @@ function MarkdownPreviewImpl({
         return () => window.removeEventListener("dumont:scroll-top", toTop);
     }, []);
 
+    // Write a cleaned copy of the selection: the icon ligatures and button
+    // labels inside headings and code blocks are UI, not document text.
+    const handleCopy = useCallback((e: React.ClipboardEvent<HTMLDivElement>) => {
+        if (writeCleanSelection(window.getSelection(), e.currentTarget, e.clipboardData)) {
+            e.preventDefault();
+        }
+    }, []);
+
     // Register imperative scroller for split-view sync
     useEffect(() => {
         if (!registerScroller) return;
@@ -1158,7 +1167,13 @@ function MarkdownPreviewImpl({
                             />
                         </div>
                     )}
-                    <div className="markdown-body" ref={markdownBodyRef}>
+                    <div
+                        className="markdown-body"
+                        ref={markdownBodyRef}
+                        // Copy without the heading permalink icon and code-block
+                        // button text (utils/previewCopy).
+                        onCopy={handleCopy}
+                    >
                         <Markdown
                             // eslint-disable-next-line @typescript-eslint/no-explicit-any
                             remarkPlugins={remarkPlugins as any}

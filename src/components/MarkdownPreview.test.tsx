@@ -432,3 +432,30 @@ describe("local image refresh", () => {
         vi.mocked(invoke).mockImplementation((async () => null) as typeof invoke);
     });
 });
+
+describe("copying from the reader", () => {
+    it("leaves the heading permalink icon text out of the clipboard", async () => {
+        const { container } = renderPreview("## Installation\n\nRun it.");
+        const h2 = await waitFor(() => {
+            const h = container.querySelector("h2");
+            expect(h).toBeTruthy();
+            return h!;
+        });
+        const sel = window.getSelection()!;
+        sel.removeAllRanges();
+        const range = document.createRange();
+        range.selectNodeContents(container.querySelector(".markdown-body")!);
+        sel.addRange(range);
+
+        const data = new Map<string, string>();
+        const ev = new Event("copy", { bubbles: true, cancelable: true }) as Event & { clipboardData: unknown };
+        ev.clipboardData = { setData: (t: string, v: string) => data.set(t, v) };
+        h2.dispatchEvent(ev);
+
+        expect(ev.defaultPrevented).toBe(true);
+        expect(data.get("text/plain")).not.toMatch(/link/);
+        expect(data.get("text/plain")).toContain("Installation");
+        expect(data.get("text/html")).not.toContain("material-symbols");
+        sel.removeAllRanges();
+    });
+});
