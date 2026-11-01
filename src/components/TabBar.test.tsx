@@ -53,3 +53,30 @@ describe("TabBar focus (FOCUS-01)", () => {
         expect(onClose).toHaveBeenCalledWith("a");
     });
 });
+
+describe("TabBar unsaved indicator (#178)", () => {
+    it("names a dirty tab as unsaved and marks it with a visible bullet", () => {
+        const { tab } = setup([item("a", "notes.md", true), item("b", "other.md")]);
+
+        expect(screen.getByRole("tab", { name: "notes.md (unsaved changes)" })).toBe(tab("notes.md"));
+        expect(screen.getByRole("tab", { name: "other.md" })).toBe(tab("other.md"));
+
+        const bullet = (name: string) => [...tab(name).querySelectorAll("span")].find((s) => s.textContent === "• ")!;
+        expect(bullet("notes.md").className).not.toContain("invisible");
+        // A clean tab keeps the slot, hidden, so it is the same width either way.
+        expect(bullet("other.md").className).toContain("invisible");
+    });
+
+    it("shows one unsaved indicator, not a second dot in the close slot", () => {
+        const { tab } = setup([item("a", "notes.md", true)]);
+
+        expect(tab("notes.md").querySelector(".rounded-full")).toBeNull();
+        expect(screen.getByRole("button", { name: "Close notes.md" })).toBeTruthy();
+    });
+
+    it("uses the disambiguated label in the accessible name", () => {
+        setup([{ id: "a", name: "README.md", label: "README.md (docs)", dirty: true }]);
+
+        expect(screen.getByRole("tab", { name: "README.md (docs) (unsaved changes)" })).toBeTruthy();
+    });
+});
