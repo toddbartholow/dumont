@@ -139,6 +139,12 @@ pub fn run() {
     //     white pre-paint surface only stays off screen because the frontend
     //     reveals it once it has painted (#98). Restoring visibility from the
     //     saved state would put that flash straight back.
+    //
+    // Only the main window is tracked. PDF export opens hidden `pdf-export-N`
+    // windows (pdf.rs). Without the filter each one was written to the state
+    // file, and since the labels restart at 0 every launch, the next session's
+    // export windows were restored to that saved geometry instead of the page
+    // size pdf.rs gives them.
     #[cfg(desktop)]
     {
         use tauri_plugin_window_state::StateFlags;
@@ -150,6 +156,7 @@ pub fn run() {
                         | StateFlags::MAXIMIZED
                         | StateFlags::FULLSCREEN,
                 )
+                .with_filter(|label| label == "main")
                 .build(),
         );
     }
