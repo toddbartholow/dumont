@@ -10,7 +10,7 @@ import rehypeRaw from "rehype-raw";
 import rehypeSanitize from "rehype-sanitize";
 import { SANITIZE_SCHEMA } from "../utils/sanitizeSchema";
 import { invoke } from "@tauri-apps/api/core";
-import { openUrl } from "@tauri-apps/plugin-opener";
+import { openUrl, revealItemInDir } from "@tauri-apps/plugin-opener";
 import { parseFrontmatter, serializeFrontmatter, type FrontmatterValue } from "../utils/frontmatter";
 import { READER_WIDTHS, DEFAULT_READER_WIDTH } from "../utils/readerWidth";
 import type { Scroller } from "../utils/scrollSync";
@@ -18,6 +18,8 @@ import { MermaidBlock } from "./MermaidBlock";
 import { isMermaidLanguage } from "../utils/mermaidLanguage";
 import { slugify, createSlugger } from "../utils/slugify";
 import { rewriteWikilinksOutsideCode } from "../utils/wikilinkRewrite";
+import { classifyHref, relativeLinkPath } from "../utils/previewLinks";
+import { resolveRelativePath } from "../utils/resolveRelativePath";
 
 // Detect KaTeX-style math so we only load the heavy katex bundle when needed.
 // $$...$$ for block math, $...$ for inline math (not preceded/followed by digit
@@ -181,6 +183,8 @@ interface MarkdownPreviewProps {
     onNavigateRelative?: (href: string) => void;
     /** Reading column tier: "narrow" | "medium" | "wide" | "full". */
     readerWidth?: string;
+    /** Show a toast, e.g. when a link to a file next to the document can't be followed. */
+    onNotify?: (message: string, type: "info" | "error") => void;
 }
 
 /** Extract the plain-text label from a React node tree (for slug + anchor link). */
@@ -604,13 +608,18 @@ function HeadingWithAnchor(
 // Stable, stateless renderers hoisted to module scope so their identity never
 // changes across renders — react-markdown then won't remount these node types
 // when the components map is rebuilt (e.g. on file change). PREVIEW-06.
-const PreRenderer = (props: React.HTMLAttributes<HTMLPreElement>) => <CodeBlock {...props} />;
-const H1Renderer = (props: React.HTMLAttributes<HTMLHeadingElement>) => <HeadingWithAnchor level={1} {...props} />;
-const H2Renderer = (props: React.HTMLAttributes<HTMLHeadingElement>) => <HeadingWithAnchor level={2} {...props} />;
-const H3Renderer = (props: React.HTMLAttributes<HTMLHeadingElement>) => <HeadingWithAnchor level={3} {...props} />;
-const H4Renderer = (props: React.HTMLAttributes<HTMLHeadingElement>) => <HeadingWithAnchor level={4} {...props} />;
-const H5Renderer = (props: React.HTMLAttributes<HTMLHeadingElement>) => <HeadingWithAnchor level={5} {...props} />;
-const H6Renderer = (props: React.HTMLAttributes<HTMLHeadingElement>) => <HeadingWithAnchor level={6} {...props} />;
+//
+// react-markdown hands every component its hast `node`. Spread onto a DOM
+// element it became node="[object Object]" on headings, images and code
+// blocks, in the app and in every export, so each renderer drops it.
+type WithNode<P> = P & { node?: unknown };
+const PreRenderer = ({ node: _node, ...props }: WithNode<React.HTMLAttributes<HTMLPreElement>>) => <CodeBlock {...props} />;
+const H1Renderer = ({ node: _node, ...props }: WithNode<React.HTMLAttributes<HTMLHeadingElement>>) => <HeadingWithAnchor level={1} {...props} />;
+const H2Renderer = ({ node: _node, ...props }: WithNode<React.HTMLAttributes<HTMLHeadingElement>>) => <HeadingWithAnchor level={2} {...props} />;
+const H3Renderer = ({ node: _node, ...props }: WithNode<React.HTMLAttributes<HTMLHeadingElement>>) => <HeadingWithAnchor level={3} {...props} />;
+const H4Renderer = ({ node: _node, ...props }: WithNode<React.HTMLAttributes<HTMLHeadingElement>>) => <HeadingWithAnchor level={4} {...props} />;
+const H5Renderer = ({ node: _node, ...props }: WithNode<React.HTMLAttributes<HTMLHeadingElement>>) => <HeadingWithAnchor level={5} {...props} />;
+const H6Renderer = ({ node: _node, ...props }: WithNode<React.HTMLAttributes<HTMLHeadingElement>>) => <HeadingWithAnchor level={6} {...props} />;
 
 function MarkdownPreviewImpl({
     content,
@@ -623,8 +632,12 @@ function MarkdownPreviewImpl({
     onWikilinkClick,
     onNavigateRelative,
     readerWidth,
+    onNotify,
 }: MarkdownPreviewProps) {
     const mainRef = useRef<HTMLElement>(null);
+    // Through a ref so a new callback identity never rebuilds the components map.
+    const onNotifyRef = useRef(onNotify);
+    onNotifyRef.current = onNotify;
     const readerVars = READER_WIDTHS[readerWidth ?? DEFAULT_READER_WIDTH] ?? READER_WIDTHS[DEFAULT_READER_WIDTH];
     const [zoomImage, setZoomImage] = useState<{ src: string; alt: string } | null>(null);
 
@@ -689,17 +702,29 @@ function MarkdownPreviewImpl({
     }, [onContentChange]);
 
     const components = useMemo(() => ({
-        img: ({ src, alt, ...props }: React.ImgHTMLAttributes<HTMLImageElement>) => (
+        img: ({ src, alt, node: _node, ...props }: WithNode<React.ImgHTMLAttributes<HTMLImageElement>>) => (
             <LocalImage src={src || ''} alt={alt || 'image'} baseDir={baseDir} {...props} />
         ),
-        a: ({ href, children, ...rest }: React.AnchorHTMLAttributes<HTMLAnchorElement>) => {
+        a: ({ href, children, node: _node, ...rest }: React.AnchorHTMLAttributes<HTMLAnchorElement> & { node?: unknown }) => {
+            // Every branch below prevents the default action, the middle-click
+            // one included: the webview is the app window, so a link the
+            // browser follows navigates Dumont itself away, unsaved document
+            // and all. See utils/previewLinks.
+            const kind = classifyHref(href);
+            const blockAux = (e: React.MouseEvent) => e.preventDefault();
             // Wikilink: open same-folder file via callback
-            if (href && href.startsWith("wikilink:")) {
-                const target = decodeURIComponent(href.slice("wikilink:".length));
+            if (kind === "wikilink" && href) {
+                let target: string;
+                try { target = decodeURIComponent(href.slice("wikilink:".length)); }
+                catch { target = href.slice("wikilink:".length); }
                 return (
                     <a
                         {...rest}
                         href="#"
+                        // Exports turn wikilinks into plain text; they find
+                        // them by this attribute, since the href is just "#".
+                        data-wikilink={target}
+                        onAuxClick={blockAux}
                         onClick={(e) => {
                             e.preventDefault();
                             onWikilinkClick?.(target);
@@ -715,14 +740,17 @@ function MarkdownPreviewImpl({
             // play well with native hash navigation, so we scroll explicitly.
             // Falls back to a fuzzy heading-text match when the slug doesn't
             // exactly match an existing id (different markdown anchor styles).
-            if (href && href.startsWith("#")) {
+            if (kind === "anchor" && href) {
                 return (
                     <a
                         {...rest}
                         href={href}
+                        onAuxClick={blockAux}
                         onClick={(e) => {
                             e.preventDefault();
-                            const id = decodeURIComponent(href.slice(1));
+                            let id: string;
+                            try { id = decodeURIComponent(href.slice(1)); }
+                            catch { id = href.slice(1); }
                             let el: HTMLElement | null = document.getElementById(id);
                             if (!el) {
                                 // Fuzzy fallback: find a heading whose textContent
@@ -750,12 +778,7 @@ function MarkdownPreviewImpl({
             // `[y](sub/note.md)`, `[z](../other.md)` — open in-app like wikilinks
             // instead of doing nothing. Only .md/.markdown (optionally with a
             // #fragment) are claimed so other relative links fall through. NAV-05.
-            if (
-                href &&
-                onNavigateRelative &&
-                !/^(https?:|mailto:|data:|wikilink:|#)/i.test(href) &&
-                /\.(md|markdown)(#.*)?$/i.test(href)
-            ) {
+            if (kind === "relative-md" && href && onNavigateRelative) {
                 const targetHref = href;
                 return (
                     <a
@@ -773,7 +796,7 @@ function MarkdownPreviewImpl({
                         // onClick never sees middle-click; with a real href the
                         // webview would otherwise get a new-window request for
                         // tauri.localhost/<file>.md.
-                        onAuxClick={(e) => e.preventDefault()}
+                        onAuxClick={blockAux}
                     >
                         {children}
                     </a>
@@ -781,20 +804,57 @@ function MarkdownPreviewImpl({
             }
             // External http(s) and mailto links — route through the OS default
             // handler so the webview itself doesn't navigate away from the app.
-            const isExternal = !!href && /^(https?:|mailto:)/i.test(href);
+            // Middle-click opens them the same way.
+            if (kind === "external" && href) {
+                const openExternal = () => {
+                    openUrl(href).catch((err) =>
+                        console.error("Failed to open external URL:", err)
+                    );
+                };
+                return (
+                    <a
+                        href={href}
+                        {...rest}
+                        rel="noopener noreferrer"
+                        target="_blank"
+                        onClick={(e) => {
+                            e.preventDefault();
+                            openExternal();
+                        }}
+                        onAuxClick={(e) => {
+                            e.preventDefault();
+                            if (e.button === 1) openExternal();
+                        }}
+                    >
+                        {children}
+                    </a>
+                );
+            }
+            // A relative link to some other file next to the document (a PDF,
+            // an image, a .md link when there is no in-app navigation), or
+            // anything blocked. Relative files are REVEALED in the file
+            // manager rather than opened: opening would launch whatever a
+            // downloaded .md points at, an .exe or a script included. The real
+            // href stays in the DOM so exported HTML keeps a working link.
+            const isFile = (kind === "relative-file" || kind === "relative-md") && !!href;
             return (
                 <a
-                    href={href}
+                    href={isFile ? href : undefined}
                     {...rest}
-                    {...(isExternal
-                        ? { rel: "noopener noreferrer", target: "_blank" }
-                        : {})}
+                    onAuxClick={blockAux}
                     onClick={(e) => {
-                        if (!isExternal || !href) return;
                         e.preventDefault();
-                        openUrl(href).catch((err) =>
-                            console.error("Failed to open external URL:", err)
-                        );
+                        if (!isFile || !href) return;
+                        const notify = onNotifyRef.current;
+                        const resolved = filePath ? resolveRelativePath(filePath, relativeLinkPath(href)) : null;
+                        if (!resolved) {
+                            notify?.("Save the document to follow links to files next to it", "info");
+                            return;
+                        }
+                        revealItemInDir(resolved).catch(() => {
+                            const name = resolved.replace(/\\/g, "/").split("/").pop() || resolved;
+                            notify?.(`Could not find "${name}"`, "error");
+                        });
                     }}
                 >
                     {children}
@@ -836,11 +896,11 @@ function MarkdownPreviewImpl({
         // Earlier designs used render-order counters; both the count-on-click and
         // the capture-on-render variants mis-addressed tasks once React re-ran the
         // renderers out of lockstep with the component body (PREVIEW-07).
-        input: ({ type, checked, ...rest }: React.InputHTMLAttributes<HTMLInputElement>) => {
+        input: ({ type, checked, node: _node, ...rest }: WithNode<React.InputHTMLAttributes<HTMLInputElement>>) => {
             if (type !== "checkbox") return <input type={type} checked={checked} {...rest} />;
             return <InteractiveTaskCheckbox initialChecked={!!checked} onToggle={handleTaskToggle} />;
         },
-    }), [baseDir, handleTaskToggle, onWikilinkClick, onNavigateRelative]);
+    }), [baseDir, filePath, handleTaskToggle, onWikilinkClick, onNavigateRelative]);
 
     // Parse YAML frontmatter once per content change. We render it as a
     // metadata card and pass the *body* (without the --- block) to react-markdown

@@ -10,12 +10,13 @@ import { render, cleanup, waitFor } from "@testing-library/react";
 import { MarkdownPreview } from "./MarkdownPreview";
 import { invoke } from "@tauri-apps/api/core";
 import { extractHeadings } from "../utils/outline";
+import { openUrl, revealItemInDir } from "@tauri-apps/plugin-opener";
 
 vi.mock("@tauri-apps/api/core", () => ({
     invoke: vi.fn(async () => null),
     convertFileSrc: (p: string) => p,
 }));
-vi.mock("@tauri-apps/plugin-opener", () => ({ openUrl: vi.fn(async () => {}) }));
+vi.mock("@tauri-apps/plugin-opener", () => ({ openUrl: vi.fn(async () => {}), revealItemInDir: vi.fn(async () => {}) }));
 
 afterEach(cleanup);
 
@@ -251,5 +252,93 @@ describe("wikilinks", () => {
         expect(container.querySelector("pre")!.textContent).toContain("const x = [[1, 2]];");
         expect(container.querySelector("p:last-of-type code")!.textContent).toBe("[[inline]]");
         expect(container.querySelectorAll("a[title^='Wikilink']").length).toBe(1);
+    });
+});
+
+// The webview is the app window: a link the browser follows replaces Dumont,
+// unsaved document and all. Only http(s)/mailto/anchors/wikilinks/.md links
+// used to be prevented, so `[spec](spec.pdf)` navigated the app away.
+describe("links never navigate the app window", () => {
+    const click = (el: Element, init: MouseEventInit = {}) => {
+        const ev = new MouseEvent("click", { bubbles: true, cancelable: true, ...init });
+        el.dispatchEvent(ev);
+        return ev;
+    };
+    const auxClick = (el: Element) => {
+        const ev = new MouseEvent("auxclick", { bubbles: true, cancelable: true, button: 1 });
+        el.dispatchEvent(ev);
+        return ev;
+    };
+    const firstLink = async (container: HTMLElement) =>
+        waitFor(() => {
+            const a = container.querySelector("a");
+            expect(a).toBeTruthy();
+            return a!;
+        });
+
+    it("reveals a relative file next to the document instead of following it", async () => {
+        vi.mocked(revealItemInDir).mockClear();
+        const { container } = renderPreview("[spec](docs/spec%20v2.pdf#page=3)", { filePath: "/notes/doc.md" });
+        const a = await firstLink(container);
+        expect(a.getAttribute("href")).toBe("docs/spec%20v2.pdf#page=3"); // exports keep the link
+        expect(click(a).defaultPrevented).toBe(true);
+        expect(auxClick(a).defaultPrevented).toBe(true);
+        expect(revealItemInDir).toHaveBeenCalledWith("/notes/docs/spec v2.pdf");
+    });
+
+    it("explains instead of navigating when the document has no folder yet", async () => {
+        const onNotify = vi.fn();
+        vi.mocked(revealItemInDir).mockClear();
+        const { container } = renderPreview("[pic](pic.png)", { onNotify });
+        const a = await firstLink(container);
+        expect(click(a).defaultPrevented).toBe(true);
+        expect(revealItemInDir).not.toHaveBeenCalled();
+        expect(onNotify).toHaveBeenCalledWith(expect.stringMatching(/save the document/i), "info");
+    });
+
+    it("says so when the linked file does not exist", async () => {
+        const onNotify = vi.fn();
+        vi.mocked(revealItemInDir).mockRejectedValueOnce(new Error("not found"));
+        const { container } = renderPreview("[gone](gone.zip)", { filePath: "C:\\notes\\doc.md", onNotify });
+        click(await firstLink(container));
+        await waitFor(() => expect(onNotify).toHaveBeenCalledWith('Could not find "gone.zip"', "error"));
+    });
+
+    it("prevents a relative .md link even without in-app navigation", async () => {
+        const { container } = renderPreview("[other](other.md)", { filePath: "/notes/doc.md" });
+        expect(click(await firstLink(container)).defaultPrevented).toBe(true);
+    });
+
+    it("blocks raw-HTML links with other schemes", async () => {
+        const { container } = renderPreview('<a href="file:///etc/passwd">f</a> <a href="//evil.example/">e</a>', { filePath: "/n/d.md" });
+        await waitFor(() => expect(container.querySelectorAll("a").length).toBe(2));
+        for (const a of Array.from(container.querySelectorAll("a"))) {
+            expect(click(a).defaultPrevented).toBe(true);
+            expect(auxClick(a).defaultPrevented).toBe(true);
+            expect(a.getAttribute("href") ?? "").not.toMatch(/^(file:|\/\/)/);
+        }
+    });
+
+    it("opens external links with the OS, on middle-click too", async () => {
+        vi.mocked(openUrl).mockClear();
+        const { container } = renderPreview("[site](https://example.com)");
+        const a = await firstLink(container);
+        expect(click(a).defaultPrevented).toBe(true);
+        expect(auxClick(a).defaultPrevented).toBe(true);
+        expect(openUrl).toHaveBeenCalledTimes(2);
+    });
+
+    it("blocks middle-click on wikilinks and anchors", async () => {
+        const { container } = renderPreview("[[Note]] and [top](#top)");
+        await waitFor(() => expect(container.querySelectorAll("a").length).toBe(2));
+        for (const a of Array.from(container.querySelectorAll("a"))) {
+            expect(auxClick(a).defaultPrevented).toBe(true);
+        }
+    });
+
+    it("does not leak react-markdown's node prop onto DOM elements", async () => {
+        const { container } = renderPreview("# H\n\n[a](https://x.y) ![i](https://x.y/i.png)\n\n```\ncode\n```\n\n- [ ] task\n\n| a |\n|---|\n| b |");
+        await waitFor(() => expect(container.querySelector("pre")).toBeTruthy());
+        expect(container.querySelector("[node]")).toBeNull();
     });
 });
