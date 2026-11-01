@@ -381,6 +381,7 @@ function CodeEditorImpl({
     const onImagePasteRef = useRef(onImagePaste); onImagePasteRef.current = onImagePaste;
     const onErrorRef = useRef(onError); onErrorRef.current = onError;
     const onNoticeRef = useRef(onNotice); onNoticeRef.current = onNotice;
+    const onReviewResolveRef = useRef(onReviewResolve); onReviewResolveRef.current = onReviewResolve;
     const onFindOpenChangeRef = useRef(onFindOpenChange); onFindOpenChangeRef.current = onFindOpenChange;
     // Read at RENDER time on purpose, not synced in an effect: a paste or AI result
     // landing between the commit of a tab switch and its effects must already see
@@ -425,6 +426,11 @@ function CodeEditorImpl({
     const reviewingRef = useRef(false);
     const reviewOriginalRef = useRef("");
     const lastReviewRef = useRef<string | null>(null);
+    // Whether the current review has ever had a chunk. Resolving the last one
+    // individually ends the review, but a review that STARTED with none (a
+    // proposal identical to the document) must not end the instant it opens,
+    // and the merge field can report zero for a moment before it computes them.
+    const reviewHadChunksRef = useRef(false);
 
     // `[[` autocomplete: when the caret is inside an open wikilink target, offer
     // the folder's other markdown files. Reads wikiNamesRef (refreshed below) so
@@ -567,6 +573,26 @@ function CodeEditorImpl({
                 if (accepted !== null && accepted !== lastEmittedRef.current) {
                     lastEmittedRef.current = accepted;
                     onChangeRef.current?.(accepted);
+                }
+                // Resolving every chunk one at a time ends the review the same way
+                // Accept all / Reject all do. Checked on EVERY update, not just
+                // doc-changing ones: accepting a chunk folds it into the original
+                // side and leaves the editor doc untouched, so a docChanged gate
+                // would never see a review finished by accepting.
+                let chunkCount = -1;
+                try { chunkCount = getChunks(update.state)?.chunks.length ?? -1; } catch { /* merge field not ready */ }
+                if (chunkCount > 0) reviewHadChunksRef.current = true;
+                if (reviewHadChunksRef.current && chunkCount === 0) {
+                    // Deferred: dispatching from inside an update listener is
+                    // re-entrant. Re-check then, in case Accept all / Reject all or a
+                    // new proposal got there first.
+                    requestAnimationFrame(() => {
+                        const v = viewRef.current;
+                        if (!v || !reviewingRef.current) return;
+                        let stillZero = false;
+                        try { stillZero = (getChunks(v.state)?.chunks.length ?? -1) === 0; } catch { /* merge view gone */ }
+                        if (stillZero) finishReview(v.state.doc.toString());
+                    });
                 }
             } else if (update.docChanged) {
                 const value = update.state.doc.toString();
@@ -848,7 +874,11 @@ function CodeEditorImpl({
         if (!view) return;
         if (reviewDoc != null) {
             if (reviewingRef.current && reviewDoc === lastReviewRef.current) return;
-            if (!reviewingRef.current) reviewOriginalRef.current = view.state.doc.toString();
+            if (!reviewingRef.current) {
+                reviewOriginalRef.current = view.state.doc.toString();
+                // Only for a FRESH review: a refreshed proposal mid-review keeps it.
+                reviewHadChunksRef.current = false;
+            }
             reviewingRef.current = true;
             lastReviewRef.current = reviewDoc;
             setReviewActive(true);
@@ -875,17 +905,25 @@ function CodeEditorImpl({
         }
     }, [reviewDoc]);
 
+    // Tear down the merge view and resolve the review with `final`. Shared by
+    // Accept all and by the update listener, which calls it once the last chunk
+    // has been accepted or rejected on its own; by then the editor doc already IS
+    // the result. Stable (refs only), so the once-created listener can hold it.
+    const finishReview = useCallback((final: string) => {
+        reviewingRef.current = false;
+        lastReviewRef.current = null;
+        reviewHadChunksRef.current = false;
+        setReviewActive(false);
+        viewRef.current?.dispatch({ effects: mergeCompRef.current.reconfigure([]) });
+        lastEmittedRef.current = final; // keep the App content-sync from re-dispatching
+        onReviewResolveRef.current?.(final);
+    }, []);
+
     const acceptAllChanges = useCallback(() => {
         const view = viewRef.current;
         if (!view) return;
-        const final = view.state.doc.toString();
-        reviewingRef.current = false;
-        lastReviewRef.current = null;
-        setReviewActive(false);
-        view.dispatch({ effects: mergeCompRef.current.reconfigure([]) });
-        lastEmittedRef.current = final; // keep the App content-sync from re-dispatching
-        onReviewResolve?.(final);
-    }, [onReviewResolve]);
+        finishReview(view.state.doc.toString());
+    }, [finishReview]);
 
     const rejectAllChanges = useCallback(() => {
         const view = viewRef.current;
@@ -893,6 +931,7 @@ function CodeEditorImpl({
         const orig = reviewOriginalRef.current;
         reviewingRef.current = false;
         lastReviewRef.current = null;
+        reviewHadChunksRef.current = false;
         setReviewActive(false);
         view.dispatch({
             changes: { from: 0, to: view.state.doc.length, insert: orig },
@@ -902,8 +941,8 @@ function CodeEditorImpl({
         // Pass the original explicitly (not null): the preview was live-tracking the
         // accepted-so-far document during review, so we must reset it all the way
         // back, not leave it on a partially-accepted state.
-        onReviewResolve?.(orig);
-    }, [onReviewResolve]);
+        onReviewResolveRef.current?.(orig);
+    }, []);
 
     // Scroll-fraction sync (rAF-throttled — PREVIEW-04) + imperative scroller.
     const scrollRafRef = useRef(0);

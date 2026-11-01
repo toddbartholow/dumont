@@ -1,10 +1,12 @@
-// Things the editor writes LATER: an HTML or image paste that waits on a
-// conversion or a disk write, and the AI bubble's Replace and Insert. Each one
-// used to act on offsets captured before the wait, which by then could point at
-// different text or a different document.
+// Things the editor does LATER: an HTML or image paste that waits on a
+// conversion or a disk write, the AI bubble's Replace and Insert, and a review
+// that ends when its last change is resolved. Each one used to act on offsets
+// or state captured before the wait, which by then could point at different
+// text or a different document.
 import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from "vitest";
 import { render, waitFor, cleanup, screen, fireEvent, act } from "@testing-library/react";
 import { EditorView } from "@codemirror/view";
+import { getChunks, acceptChunk, rejectChunk } from "@codemirror/merge";
 import { CodeEditor } from "./CodeEditor";
 import { TestProviders } from "../test/providers";
 import { installCodeMirrorDomPolyfills } from "../test/codemirrorDom";
@@ -74,6 +76,7 @@ function paste(view: EditorView, html: string, text: string) {
 }
 
 const flush = () => act(async () => { await new Promise((r) => setTimeout(r, 0)); });
+const nextFrame = () => act(async () => { await new Promise((r) => requestAnimationFrame(() => r(null))); });
 
 describe("HTML paste across its await", () => {
     it("lands where it was pasted even if the caret moved meanwhile", async () => {
@@ -236,5 +239,61 @@ describe("AI bubble Replace and Insert", () => {
         update({ content: "a different file", docSwapId: 2 });
         await waitFor(() => expect(screen.queryByRole("dialog", { name: "AI assist" })).toBeNull());
         expect(v.state.doc.toString()).toBe("a different file");
+    });
+});
+
+describe("AI review resolved one change at a time", () => {
+    const original = "one\ntwo\nthree\nfour\nfive\nsix\n";
+    const proposed = "one\nTWO\nthree\nfour\nfive\nSIX\n";
+
+    async function startReview(reviewDoc: string) {
+        const s = setup({ content: original });
+        await waitFor(() => expect(s.view()).toBeTruthy());
+        s.update({ reviewDoc });
+        await screen.findByRole("button", { name: "Accept all" });
+        return s;
+    }
+    const chunks = (v: EditorView) => getChunks(v.state)?.chunks ?? [];
+
+    it("ends the review when the last change is resolved individually", async () => {
+        const { view, onReviewResolve } = await startReview(proposed);
+        const v = view();
+        expect(chunks(v).length).toBe(2);
+        act(() => { rejectChunk(v, chunks(v)[0].fromB); });
+        act(() => { acceptChunk(v, chunks(v)[0].fromB); });
+        await nextFrame();
+        await waitFor(() => expect(onReviewResolve).toHaveBeenCalledWith("one\ntwo\nthree\nfour\nfive\nSIX\n"));
+        expect(screen.queryByRole("button", { name: "Accept all" })).toBeNull();
+    });
+
+    it("ends it when every change is ACCEPTED one by one, which leaves the doc unchanged", async () => {
+        const { view, onReviewResolve } = await startReview(proposed);
+        const v = view();
+        act(() => { acceptChunk(v, chunks(v)[0].fromB); });
+        act(() => { acceptChunk(v, chunks(v)[0].fromB); });
+        await nextFrame();
+        await waitFor(() => expect(onReviewResolve).toHaveBeenCalledWith(proposed));
+        expect(screen.queryByRole("button", { name: "Accept all" })).toBeNull();
+    });
+
+    it("stays open while changes remain", async () => {
+        const { view, onReviewResolve } = await startReview(proposed);
+        const v = view();
+        act(() => { acceptChunk(v, chunks(v)[0].fromB); });
+        await nextFrame();
+        await nextFrame();
+        expect(onReviewResolve).not.toHaveBeenCalled();
+        expect(screen.getByRole("button", { name: "Accept all" })).toBeTruthy();
+    });
+
+    it("does not close a review that started with no changes at all", async () => {
+        const { view, onReviewResolve } = await startReview(original);
+        expect(chunks(view()).length).toBe(0);
+        // Any edit runs the update listener; a zero count must not read as "done".
+        act(() => { view().dispatch({ selection: { anchor: 1 } }); });
+        await nextFrame();
+        await nextFrame();
+        expect(onReviewResolve).not.toHaveBeenCalled();
+        expect(screen.getByRole("button", { name: "Accept all" })).toBeTruthy();
     });
 });
