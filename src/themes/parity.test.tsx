@@ -17,7 +17,6 @@ import { render } from "@testing-library/react";
 // exportUtils pulls in the Tauri plugins at module load. The generators under test
 // never call them.
 vi.mock("@tauri-apps/plugin-dialog", () => ({ save: vi.fn() }));
-vi.mock("@tauri-apps/plugin-fs", () => ({ writeTextFile: vi.fn(), writeFile: vi.fn() }));
 
 import { TestProviders } from "../test/providers";
 import { generateHTML } from "../utils/exportUtils";

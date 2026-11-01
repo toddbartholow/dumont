@@ -9,7 +9,7 @@ mod pdf;
 mod settings;
 mod themes;
 
-use commands::{read_file, save_file, get_file_info, list_directory_files, search_files, find_backlinks, save_image, read_image_file, ai_key_present, set_ai_key};
+use commands::{read_file, save_file, write_export_file, get_file_info, list_directory_files, search_files, find_backlinks, save_image, read_image_file, ai_key_present, set_ai_key};
 use tauri::{Manager, Emitter};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
@@ -163,7 +163,6 @@ pub fn run() {
 
     builder
         .plugin(tauri_plugin_opener::init())
-        .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             // Updater (GitHub latest.json) + process (relaunch after install)
@@ -231,6 +230,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             read_file,
             save_file,
+            write_export_file,
             get_file_info,
             list_directory_files,
             search_files,
