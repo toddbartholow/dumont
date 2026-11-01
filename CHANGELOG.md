@@ -11,6 +11,8 @@ divider is the upstream project's changelog, retained for provenance.
 
 ## [Unreleased]
 
+## [1.1.8] - 2026-11-01
+
 ### Fixed
 
 - **Mermaid and KaTeX no longer load at startup.** A build setting made the
