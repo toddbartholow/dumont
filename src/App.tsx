@@ -2082,9 +2082,9 @@ function AppContent() {
   }, [closeManyClean, activateTab]);
 
   // A mouse click on a tab means "show me this note", so the note takes focus, as in
-  // VS Code. Focus used to stay on the tab: typing went nowhere, and Delete (then also
-  // Backspace), the tab strip's keyboard close key, closed the document. Keyboard
-  // navigation of the strip does not come through here and keeps focus. FOCUS-01.
+  // VS Code. Focus used to stay on the tab: typing went nowhere, and Backspace, then one
+  // of the tab strip's keyboard close keys, closed the document. Keyboard navigation of
+  // the strip does not come through here and keeps focus. FOCUS-01.
   //
   // One frame later, so it runs after the browser's own mousedown focus (which lands on
   // the tab) and after the activated tab has rendered. Whichever view is visible wins:
